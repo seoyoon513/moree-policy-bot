@@ -1,0 +1,18 @@
+# --- 봇 ---
+discord.py>=2.4
+anthropic>=0.40
+python-dotenv>=1.0
+notion-client>=3.0
+
+# --- RAG + API ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic-settings>=2.4
+chromadb>=0.5
+openai>=1.40
+# 로컬 임베딩을 쓸 때만 (EMBEDDING_BACKEND=local). torch가 같이 설치되어 무거움
+# sentence-transformers>=3.0
+
+# --- 테스트 ---
+pytest>=8
+httpx>=0.27
