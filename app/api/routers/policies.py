@@ -10,14 +10,14 @@ import logging
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.deps import get_generator, get_retriever
-from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, SearchResponse
+from app.api.deps import get_generator, get_retriever, require_api_key
+from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, SearchResponse, UsageInfo
 from app.rag.generator import AnswerGenerator
 from app.rag.models import SearchHit
 from app.rag.retriever import Retriever
 
 log = logging.getLogger("policy-api")
-router = APIRouter(prefix="/policies", tags=["policies"])
+router = APIRouter(prefix="/policies", tags=["policies"], dependencies=[Depends(require_api_key)])
 
 
 def _to_hit(h: SearchHit, snippet_len: int = 300) -> PolicyHit:
@@ -50,13 +50,18 @@ def answer_policy_question(
 ):
     hits = retriever.search(body.question, k=body.k, area=body.area, status=body.status)
     try:
-        answer = generator.answer(body.question, hits)
+        result = generator.answer(body.question, hits)
     except anthropic.APIError as e:
         # 우리 서버가 아니라 상위(upstream) 서비스가 실패한 것 → 502 Bad Gateway
         log.exception("Claude 호출 실패")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Claude 호출 실패: {type(e).__name__}: {e}") from e
     return AnswerResponse(
         question=body.question,
-        answer=answer,
+        answer=result.text,
         sources=[_to_hit(h, 150) for h in hits],
+        usage=UsageInfo(
+            model=result.usage.model, input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens, latency_ms=result.usage.latency_ms,
+            cost_usd=result.usage.cost_usd,
+        ) if result.usage else None,
     )

@@ -1,0 +1,57 @@
+# 실행:  docker compose up -d --build
+# 로그:  docker compose logs -f bot   (또는 api)
+# 중지:  docker compose down
+services:
+  api:
+    build: .
+    image: policy-bot:latest
+    env_file: .env
+    environment:
+      CHROMA_PATH: /app/data/chroma
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data            # 호스트 폴더 ↔ 컨테이너 폴더. 인덱스·히스토리·usage 로그 보존
+    ports:
+      # "호스트IP:호스트포트:컨테이너포트"
+      # 127.0.0.1 로 묶으면 서버 자기 자신만 접근 가능 (인터넷에서 8000번으로 못 들어옴).
+      # 외부에 열 때는 이 줄을 바꾸는 대신 Nginx(80/443)를 앞에 두는 게 정석
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  bot:
+    image: policy-bot:latest        # api가 빌드한 같은 이미지 재사용
+    command: ["python", "bot.py"]
+    env_file: .env
+    environment:
+      # 컨테이너끼리는 compose 네트워크 안에서 '서비스 이름'이 곧 호스트명(내부 DNS)
+      # localhost 는 '봇 컨테이너 자기 자신'이라 여기선 쓰면 안 됨
+      POLICY_API_URL: http://api:8000
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    # ports 없음: 봇은 디스코드 서버로 '나가는' 연결(WebSocket)만 쓰므로 들어오는 포트가 필요 없다
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # 외부 공개용 터널 (기본 꺼짐). 켜기:  docker compose --profile tunnel up -d
+  # Mac → Cloudflare 로 '나가는' 연결을 열어 두고, 외부 요청이 그 연결을 타고 api:8000 으로 들어온다.
+  # 공유기 포트포워딩 불필요, 집 공개 IP 비노출, HTTPS 자동.
+  # 계정 없는 임시 주소(https://<랜덤>.trycloudflare.com)라 재시작하면 주소가 바뀐다.
+  # 주소 확인:  docker compose logs tunnel | grep trycloudflare
+  # ⚠️ 켜기 전에 .env 에 API_KEY 를 꼭 설정할 것 (없으면 누구나 /policies/answers 로 Claude 비용 사용)
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://api:8000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["tunnel"]
+    restart: unless-stopped

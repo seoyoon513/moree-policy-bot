@@ -6,12 +6,16 @@ from datetime import datetime
 
 from anthropic import AsyncAnthropic
 
-from config import ANTHROPIC_API_KEY, AREAS, CLAUDE_MODEL, KST, MAX_TRANSCRIPT_CHARS, STATUSES
+from app import usage as usage_log
+
+from config import ANTHROPIC_API_KEY, AREAS, CLAUDE_MODEL, KST, MAX_TRANSCRIPT_CHARS, STATUSES, SUMMARY_MAX_TOKENS
 from prompts import SYSTEM_PROMPT, build_user_prompt
 
 
 class SummaryError(Exception):
-    pass
+    def __init__(self, msg: str, raw: str | None = None):
+        super().__init__(msg)
+        self.raw = raw  # 실패 원인 분석용 모델 원문 응답
 
 
 @dataclass
@@ -128,14 +132,23 @@ def normalize(data: dict, max_index: int) -> list[dict]:
 async def summarize_thread(thread_name: str, messages: list[ThreadMessage]) -> list[dict]:
     transcript = build_transcript(messages)
     try:
-        resp = await _get_client().messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_user_prompt(thread_name, transcript)}],
-        )
+        with usage_log.timer() as elapsed:
+            resp = await _get_client().messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=SUMMARY_MAX_TOKENS,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": build_user_prompt(thread_name, transcript)}],
+            )
     except Exception as e:  # 네트워크/인증/레이트리밋 등
         raise SummaryError(f"Claude API 호출 실패: {e}") from e
 
+    usage_log.from_anthropic("summarize", CLAUDE_MODEL, resp, elapsed())
     text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-    return normalize(parse_json(text), max_index=len(messages))
+    if getattr(resp, "stop_reason", None) == "max_tokens":
+        # 출력이 한도에서 잘리면 JSON이 닫히지 않아 파싱이 엉뚱한 위치에서 실패한다 → 원인을 그대로 알려줌
+        raise SummaryError(f"출력이 max_tokens({SUMMARY_MAX_TOKENS})에서 잘림 — 스레드가 길거나 응답이 반복됨", raw=text)
+    try:
+        return normalize(parse_json(text), max_index=len(messages))
+    except SummaryError as e:
+        e.raw = text
+        raise

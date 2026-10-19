@@ -1,6 +1,7 @@
 """[R 단계 준비 3] 텍스트 → 벡터. 백엔드를 교체할 수 있게 인터페이스로 분리."""
 from typing import Protocol
 
+from app import usage as usage_log
 from app.config import Settings
 
 
@@ -15,15 +16,23 @@ class OpenAIEmbedder:
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    def _embed(self, texts: list[str], feature: str) -> list[list[float]]:
         out: list[list[float]] = []
         for i in range(0, len(texts), 100):  # 배치
-            res = self.client.embeddings.create(model=self.model, input=texts[i:i + 100])
+            with usage_log.timer() as elapsed:
+                res = self.client.embeddings.create(model=self.model, input=texts[i:i + 100])
+            usage_log.record(usage_log.Usage(
+                feature=feature, model=self.model, kind="embedding",
+                input_tokens=getattr(res.usage, "prompt_tokens", 0) or 0, latency_ms=elapsed(),
+            ))
             out.extend(d.embedding for d in res.data)
         return out
 
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts, "embed_index")
+
     def embed_query(self, text: str) -> list[float]:
-        return self.embed_documents([text])[0]
+        return self._embed([text], "embed_query")[0]
 
 
 class LocalEmbedder:

@@ -29,10 +29,20 @@ class AnswerRequest(BaseModel):
     k: int = Field(default=6, ge=1, le=20)
 
 
+class UsageInfo(BaseModel):
+    """이번 답변 생성(LLM 호출) 1회의 토큰/비용. 검색 결과가 없으면 LLM을 부르지 않아 null."""
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    cost_usd: float
+
+
 class AnswerResponse(BaseModel):
     question: str
     answer: str
     sources: list[PolicyHit]
+    usage: UsageInfo | None = None
 
 
 class SyncJobCreate(BaseModel):

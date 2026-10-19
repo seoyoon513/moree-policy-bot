@@ -1,0 +1,284 @@
+"""여러 스레드를 한 번에 /정책정리 하는 스크립트 (초기 데이터 채우기용).
+
+    # 1) 읽기 + 요약 → 검토 파일 생성 (아무것도 저장하지 않음)
+    python -m scripts.batch_summarize links.txt
+    # 2) 검토 파일에서 뺄 것만 "include": false 로 바꾼 뒤 저장
+    python -m scripts.batch_summarize --commit data/batch/review-<시각>.json
+
+links.txt: 한 줄에 링크 하나. '#'으로 시작하는 줄은 무시.
+  - 스레드 링크  https://discord.com/channels/<서버>/<스레드>
+  - 메시지 링크  https://discord.com/channels/<서버>/<스레드>/<메시지>  (스레드로 취급)
+  - 포럼/채널 링크 → 그 채널의 스레드 전부 (진행중 + 보관된 것)
+
+Discord에 남는 흔적 없음:
+  - 게이트웨이에 접속하지 않고 REST로 '읽기'만 한다 (메시지 전송·반응·입력중 표시·온라인 표시 없음)
+  - 스레드에 참여(join)하지 않는다. 봇이 멤버가 아닌 비공개 스레드는 읽지 못하고 '건너뜀'으로 보고만 한다
+요약은 /정책정리와 같은 프롬프트(summarizer.py)를 쓰므로 결과 품질이 같다.
+"""
+import argparse
+import asyncio
+import json
+import re
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+import discord
+
+from config import ANTHROPIC_API_KEY, DATA_DIR, DISCORD_TOKEN, KST, MAX_MESSAGES
+from summarizer import SummaryError, ThreadMessage, summarize_thread
+
+LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)(?:/(\d+))?")
+CONCURRENCY = 3  # 동시에 요약할 스레드 수 (Claude 레이트리밋 고려)
+
+
+def _format_content(m: discord.Message) -> str:  # bot.py와 동일 규칙
+    parts = [m.content.strip()] if m.content.strip() else []
+    parts += [f"[첨부: {a.filename}]" for a in m.attachments]
+    parts += [f"[링크: {e.title or e.url}]" for e in m.embeds if e.title or e.url]
+    return " ".join(parts).replace("\n", " / ")
+
+
+def parse_links(path: str) -> list[tuple[int, int]]:
+    out, seen = [], set()
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = LINK_RE.search(line)
+        if not m:
+            print(f"⚠️  링크 형식 아님, 건너뜀: {line}")
+            continue
+        key = (int(m.group(1)), int(m.group(2)))
+        if key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def already_saved_thread_ids() -> set[str]:
+    p = Path(DATA_DIR) / "history.jsonl"
+    if not p.exists():
+        return set()
+    ids = set()
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            ids.add(str(json.loads(line)["source"]["thread_id"]))
+        except (ValueError, KeyError, TypeError):
+            pass
+    return ids
+
+
+async def expand_channel(client: discord.Client, guild_id: int, ch) -> list[discord.Thread]:
+    """포럼/텍스트 채널 → 그 안의 스레드 (진행중 + 보관)."""
+    threads: dict[int, discord.Thread] = {}
+    guild = await client.fetch_guild(guild_id)
+    for t in await guild.active_threads():
+        if t.parent_id == ch.id:
+            threads[t.id] = t
+    try:
+        async for t in ch.archived_threads(limit=None):
+            threads[t.id] = t
+    except discord.Forbidden:
+        print(f"⚠️  #{ch.name}: 보관된 스레드 목록 권한 없음 (Read Message History 확인)")
+    return list(threads.values())
+
+
+async def collect(client: discord.Client, thread: discord.Thread) -> list[ThreadMessage]:
+    raw: list[discord.Message] = []
+    # 텍스트 채널 스레드는 시작 메시지가 부모 채널에 있다 (포럼은 history에 포함)
+    try:
+        parent = await client.fetch_channel(thread.parent_id)
+        if isinstance(parent, discord.TextChannel):
+            raw.append(await parent.fetch_message(thread.id))
+    except discord.HTTPException:
+        pass
+    starter_ids = {m.id for m in raw}
+    async for m in thread.history(limit=MAX_MESSAGES, oldest_first=True):
+        if m.id not in starter_ids:
+            raw.append(m)
+
+    result = []
+    for m in raw:
+        if m.author.bot:
+            continue
+        content = _format_content(m)
+        if content:
+            result.append(ThreadMessage(len(result) + 1, m.author.display_name, m.created_at, content, m.jump_url))
+    return result
+
+
+async def read_and_summarize(links_path: str, force: bool, limit: int | None) -> None:
+    targets = parse_links(links_path)
+    saved = set() if force else already_saved_thread_ids()
+    client = discord.Client(intents=discord.Intents.none())
+    await client.login(DISCORD_TOKEN)  # REST 인증만. connect()를 안 하므로 온라인 표시도 안 됨
+    try:
+        threads: list[discord.Thread] = []
+        report: list[dict] = []
+        for guild_id, ch_id in targets:
+            try:
+                ch = await client.fetch_channel(ch_id)
+            except discord.Forbidden:
+                report.append({"id": ch_id, "skip": "권한 없음 (비공개 스레드면 봇이 멤버가 아님)"})
+                continue
+            except discord.NotFound:
+                report.append({"id": ch_id, "skip": "찾을 수 없음 (링크 확인)"})
+                continue
+            if isinstance(ch, discord.Thread):
+                threads.append(ch)
+            elif isinstance(ch, (discord.ForumChannel, discord.TextChannel)):
+                found = await expand_channel(client, guild_id, ch)
+                print(f"📂 #{ch.name}: 스레드 {len(found)}개")
+                threads.extend(found)
+            else:
+                report.append({"id": ch_id, "skip": f"스레드/채널이 아님 ({type(ch).__name__})"})
+
+        uniq = {t.id: t for t in threads}
+        todo = [t for t in uniq.values() if str(t.id) not in saved]
+        for t in uniq.values():
+            if str(t.id) in saved:
+                report.append({"id": t.id, "name": t.name, "skip": "이미 저장된 스레드 (--force로 다시)"})
+        if limit:
+            todo = todo[:limit]
+        print(f"🧵 처리할 스레드 {len(todo)}개 (건너뜀 {len(report)}개)")
+
+        sem = asyncio.Semaphore(CONCURRENCY)
+        results: list[dict] = []
+
+        async def one(t: discord.Thread):
+            async with sem:
+                try:
+                    msgs = await collect(client, t)
+                except discord.Forbidden:
+                    report.append({"id": t.id, "name": t.name, "skip": "메시지 읽기 권한 없음 (비공개 스레드?)"})
+                    return
+                if not msgs:
+                    report.append({"id": t.id, "name": t.name, "skip": "사람이 쓴 메시지 없음"})
+                    return
+                try:
+                    decisions = await summarize_thread(t.name, msgs)
+                except SummaryError as e:
+                    report.append({"id": t.id, "name": t.name, "skip": f"요약 실패: {e}"})
+                    if e.raw:  # 왜 깨졌는지 볼 수 있게 원문 저장
+                        fail_dir = Path(DATA_DIR) / "batch" / "failed"
+                        fail_dir.mkdir(parents=True, exist_ok=True)
+                        (fail_dir / f"{t.id}.txt").write_text(e.raw, encoding="utf-8")
+                    return
+                for d in decisions:
+                    d["include"] = True
+                results.append({
+                    "thread_name": t.name,
+                    "message_count": len(msgs),
+                    # 저장 시 승인일로 쓴다. 오늘 날짜로 넣으면 과거 결정이 전부 '최신'이 되어 시간순이 깨짐
+                    "last_message_at": msgs[-1].created_at.isoformat(),
+                    "source": {
+                        "thread_id": str(t.id),
+                        "thread_name": t.name,
+                        "thread_url": t.jump_url,
+                        "message_urls_by_index": {m.index: m.jump_url for m in msgs},
+                    },
+                    "decisions": decisions,
+                })
+                print(f"  ✓ {t.name[:40]} — 메시지 {len(msgs)}개 → 결정 {len(decisions)}건")
+
+        await asyncio.gather(*(one(t) for t in todo))
+    finally:
+        await client.close()
+
+    results.sort(key=lambda r: r["thread_name"])
+    out_dir = Path(DATA_DIR) / "batch"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(KST).strftime("%Y%m%d-%H%M%S")
+    review = out_dir / f"review-{stamp}.json"
+    review.write_text(json.dumps({"threads": results, "skipped": report}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 사람이 훑어보기 쉬운 요약본
+    lines = [f"# 일괄 요약 검토 ({stamp})", ""]
+    n = 0
+    for r in results:
+        lines.append(f"## {r['thread_name']}  ({r['message_count']}개 메시지) {r['source']['thread_url']}")
+        if not r["decisions"]:
+            lines.append("- (결정 없음)")
+        for d in r["decisions"]:
+            n += 1
+            lines.append(f"- **[{n}] [{d['area']}] {d['status']} · {d['topic']}** — {d['decision']}")
+        lines.append(f"  - 승인일로 저장될 날짜: {r['last_message_at'][:10]}")
+        lines.append("")
+    if report:
+        lines += ["## 건너뜀", *[f"- {s.get('name', s['id'])}: {s['skip']}" for s in report]]
+    (out_dir / f"review-{stamp}.md").write_text("\n".join(lines), encoding="utf-8")
+
+    total = sum(len(r["decisions"]) for r in results)
+    print(f"\n결정 {total}건 → 검토 파일: {review}\n               요약본: {review.with_suffix('.md')}")
+    print("뺄 결정은 JSON에서 \"include\": false 로 바꾼 뒤:")
+    print(f"  python -m scripts.batch_summarize --commit {review}")
+
+
+async def commit(review_path: str, approved_by: str) -> None:
+    from storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
+
+    data = json.loads(Path(review_path).read_text(encoding="utf-8"))
+    saved = already_saved_thread_ids()
+    total = notion_fail = 0
+    for r in data["threads"]:
+        if r["source"]["thread_id"] in saved:
+            print(f"  - {r['thread_name']}: 이미 저장됨, 건너뜀")
+            continue
+        decisions = [{k: v for k, v in d.items() if k != "include"} for d in r["decisions"] if d.get("include", True)]
+        if not decisions:
+            continue
+        source = dict(r["source"])
+        # JSON을 거치면 dict 키가 문자열이 되므로 메시지 번호(int)로 되돌린다
+        source["message_urls_by_index"] = {int(k): v for k, v in source["message_urls_by_index"].items()}
+        decided = (datetime.fromisoformat(r["last_message_at"]) if r.get("last_message_at")
+                   else snowflake_time(source["message_urls_by_index"]))
+        results = await save_decisions(decisions, source=source, approved_by=approved_by, approved_at=decided)
+        total += len(results)
+        notion_fail += sum(1 for x in results if x.notion_error)
+        print(f"  ✓ {r['thread_name'][:40]} — {len(results)}건 저장")
+    print(f"\n저장 {total}건 (Notion 실패 {notion_fail}건)")
+    trigger_reindex()
+
+
+def snowflake_time(urls_by_index: dict) -> datetime | None:
+    """Discord ID(snowflake)에는 생성 시각이 들어 있다: (id >> 22) + 2015-01-01 기준 ms.
+    날짜 정보 없이 만든 검토 파일도 마지막 메시지 링크의 ID로 결정 시점을 복원한다."""
+    ids = [int(u.rstrip("/").rsplit("/", 1)[-1]) for u in urls_by_index.values() if u]
+    return discord.utils.snowflake_time(max(ids)) if ids else None
+
+
+def trigger_reindex() -> None:
+    import os
+    url = os.environ.get("POLICY_API_URL", "http://localhost:8000").rstrip("/") + "/admin/sync-jobs"
+    req = urllib.request.Request(url, data=b"{}", method="POST", headers={
+        "Content-Type": "application/json", "X-Admin-Token": os.environ.get("ADMIN_TOKEN", "")})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            print(f"🔄 재인덱싱 시작 ({res.status})")
+    except (urllib.error.URLError, OSError) as e:
+        print(f"⚠️  API 서버에 재인덱싱 요청 실패({e}). API가 꺼져 있으면: python -m scripts.ingest")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("links", nargs="?", help="스레드/채널 링크 파일")
+    ap.add_argument("--commit", metavar="REVIEW_JSON", help="검토 파일을 저장")
+    ap.add_argument("--approved-by", default="일괄정리", help="저장 시 승인자 이름")
+    ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 요약")
+    ap.add_argument("--limit", type=int, help="앞에서부터 N개만 (시험용)")
+    args = ap.parse_args()
+
+    if args.commit:
+        asyncio.run(commit(args.commit, args.approved_by))
+    elif args.links:
+        if not DISCORD_TOKEN or not ANTHROPIC_API_KEY:
+            raise SystemExit(".env에 DISCORD_TOKEN, ANTHROPIC_API_KEY가 필요해요.")
+        asyncio.run(read_and_summarize(args.links, args.force, args.limit))
+    else:
+        ap.print_help()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,8 +1,13 @@
 """RAG/API 설정. 봇과 같은 .env를 읽는다 (NOTION_TOKEN, NOTION_DATA_SOURCE_ID, ANTHROPIC_API_KEY, CLAUDE_MODEL 공유)."""
 from functools import lru_cache
 
+from dotenv import load_dotenv
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Settings 외에 os.environ을 직접 읽는 곳(app/usage.py 단가 등)도 .env 값을 보도록.
+# Docker에서는 env_file로 이미 환경변수가 들어오고, 이미 있는 값은 덮어쓰지 않는다.
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -41,6 +46,13 @@ class Settings(BaseSettings):
     # 이 점수(cosine 유사도) 미만인 결과는 버린다. 결과가 너무 적으면 낮추고, 엉뚱하면 높이기
     rag_min_score: float = 0.3
 
+    # --- 리랭킹 (기본 꺼짐: 평가로 효과를 확인한 뒤 켠다) ---
+    rerank_enabled: bool = False
+    rerank_model: str = "claude-haiku-5-5"
+    rerank_candidates: int = 10      # 벡터 검색에서 리랭커로 넘길 후보 수
+    rerank_min_relevance: int = 2    # 0~3점 중 이 점수 이상만 남김 (전부 미만이면 거절)
+    rerank_min_score: float = 0.2    # 리랭킹 시 벡터 하한선 (후보를 넓게 받기 위해 낮게)
+
     # --- 청킹 ---
     chunk_size: int = 800
     chunk_overlap: int = 100
@@ -52,6 +64,9 @@ class Settings(BaseSettings):
 
     # --- API ---
     admin_token: str = "change-me"
+    # 정책 조회 API(/policies/*) 인증 키. 비어 있으면 인증 없음(로컬 개발용).
+    # 터널 등으로 외부에 공개할 때는 반드시 설정: 키 없이 호출되면 누구나 Claude 비용을 쓰게 된다
+    api_key: str = ""
 
     def resolved_source(self) -> str:
         if self.rag_source != "auto":

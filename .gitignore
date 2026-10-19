@@ -16,3 +16,8 @@ __pycache__/
 
 # 테스트 캐시
 .pytest_cache/
+
+# 평가 결과 (답변 본문에 팀 정책 내용이 들어감)
+eval/results/
+# 실제 골든셋은 팀 정책 내용이 들어 있어 퍼블릭 레포에서 제외 (형식은 golden.example.jsonl 참고)
+eval/golden.jsonl

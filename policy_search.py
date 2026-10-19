@@ -23,6 +23,7 @@ log = logging.getLogger("policy-bot")
 
 API_URL = os.environ.get("POLICY_API_URL", "http://localhost:8000").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+API_KEY = os.environ.get("API_KEY", "")  # API 서버가 키를 요구할 때 (X-API-Key)
 TIMEOUT = aiohttp.ClientTimeout(total=90)
 
 # Notion은 방금 만든 페이지가 query 결과에 뜨기까지 몇 초 걸릴 수 있어서 잠깐 기다렸다가 동기화
@@ -45,7 +46,8 @@ def _get_session() -> aiohttp.ClientSession:
 
 async def _call(method: str, path: str, **kwargs) -> tuple[int, dict]:
     try:
-        async with _get_session().request(method, f"{API_URL}{path}", **kwargs) as r:
+        headers = {**({"X-API-Key": API_KEY} if API_KEY else {}), **kwargs.pop("headers", {})}
+        async with _get_session().request(method, f"{API_URL}{path}", headers=headers, **kwargs) as r:
             try:
                 data = await r.json()
             except aiohttp.ContentTypeError:
@@ -136,6 +138,9 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
             f"[{i}] [{s['title']}]({s['url']})" if s.get("url") else f"[{i}] {s['title']}"
             for i, s in enumerate(data["sources"], 1)
         )
-        text = f"**Q. {질문}**\n\n{data['answer']}\n\n**근거 문서**\n{sources}"
+        u = data.get("usage")
+        footer = (f"\n-# 토큰 in {u['input_tokens']:,} / out {u['output_tokens']:,} · ${u['cost_usd']:.4f} · {u['latency_ms'] / 1000:.1f}s"
+                  if u else "")
+        text = f"**Q. {질문}**\n\n{data['answer']}\n\n**근거 문서**\n{sources}{footer}"
         for i in range(0, len(text), 1900):  # Discord 메시지 2000자 제한
             await interaction.followup.send(text[i : i + 1900], suppress_embeds=True)

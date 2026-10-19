@@ -26,6 +26,8 @@ KST = ZoneInfo("Asia/Seoul")
 # 스레드에서 읽어올 최대 메시지 수 / LLM에 넣을 최대 글자 수
 MAX_MESSAGES = int(os.environ.get("MAX_MESSAGES", "500"))
 MAX_TRANSCRIPT_CHARS = int(os.environ.get("MAX_TRANSCRIPT_CHARS", "100000"))
+# 요약 응답 최대 토큰. 결정이 많은 긴 스레드는 4096에서 잘려 JSON이 깨진 적이 있음
+SUMMARY_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "8192"))
 
 # 승인 버튼 유효 시간(초)
 APPROVAL_TIMEOUT = int(os.environ.get("APPROVAL_TIMEOUT", "900"))
@@ -40,6 +42,8 @@ AREAS = [
     "알림",
     "도감·발도장",
     "북마크",
+    "계정·프로필",   # 로그인 외 계정 관리, 탈퇴, 프로필·공유
+    "앱 공통",       # 업데이트 팝업, 공통 컴포넌트 등 특정 화면에 속하지 않는 것
     "기타",
 ]
 

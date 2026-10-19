@@ -103,7 +103,10 @@ cp .env.example .env
 | `RAG_SOURCE` | | `auto`(Notion 있으면 Notion) / `notion` / `jsonl` |
 | `RAG_MIN_SCORE` | | 검색 점수 하한선, 기본 `0.3` |
 | `ADMIN_TOKEN` | ✅ | `/admin/sync-jobs` 인증. 임의의 긴 문자열 |
-| `POLICY_API_URL` | | 봇이 부를 API 주소, 기본 `http://localhost:8000` |
+| `POLICY_API_URL` | | 봇이 부를 API 주소, 기본 `http://localhost:8000` (Docker에서는 `http://api:8000`) |
+| `API_KEY` | 외부 공개 시 | `/policies/*` 인증 키 |
+| `RERANK_ENABLED` | | LLM 리랭킹 사용 (`RERANK_MODEL` 기본 `claude-haiku-5-5`) |
+| `SUMMARY_MAX_TOKENS` | | 요약 응답 최대 토큰, 기본 8192 |
 
 로컬 임베딩을 쓰려면 `pip install sentence-transformers` 후 `EMBEDDING_BACKEND=local`. 백엔드를 바꾸면 `python -m scripts.ingest --force`로 전체 재인덱싱한다.
 
@@ -133,9 +136,55 @@ curl -X POST localhost:8000/admin/sync-jobs \
 | POST | `/policies/answers` | RAG 답변 `{question, area?, status?, k?}` |
 | POST | `/admin/sync-jobs` | 재인덱싱 작업 생성 → `202` + `Location` (`X-Admin-Token` 필요) |
 | GET | `/admin/sync-jobs/{id}` | 작업 상태 |
+| GET | `/admin/usage?days=7` | 기능별 토큰·비용·지연 집계 (`X-Admin-Token` 필요) |
 | GET | `/health` | 헬스체크, 인덱싱된 청크 수 |
 
 주요 상태 코드: `401` 토큰 오류 · `409` 동기화 진행 중 · `422` 입력 검증 실패 · `502` Claude 호출 실패 · `503` 답변 기능 미설정
+
+## 측정
+### 토큰 사용량
+Claude/OpenAI를 부를 때마다 `data/usage.jsonl`에 한 줄씩 기록된다 (기능: `summarize` · `answer` · `embed_query` · `embed_index` · `judge`).
+- `/정책질문` 답변 하단에 이번 답변의 토큰/비용/시간 표시
+- `GET /admin/usage?days=7` 로 기능별 합계·평균
+- 단가는 `.env`의 `PRICE_*` (USD/100만 토큰)
+
+### 정확도
+`eval/golden.jsonl`(질문 → 정답 결정 제목 · 필수 단어) 기준으로 평가. 형식은 `eval/golden.example.jsonl`, 자세한 내용은 `eval/README.md`.
+```bash
+python -m scripts.eval_rag --sweep          # 검색: Hit@k · MRR · 거절 정확도 + 하한선별 비교
+python -m scripts.eval_rag --answers        # 답변: 핵심어 포함률 · 인용률 · 거절 정확도 + 1회당 비용
+python -m scripts.eval_rag --rerank --answers   # 리랭킹 켠 상태로 같은 평가 (전후 비교)
+```
+
+### 측정 결과 (2026-10-19, 결정 83건 · 38문항)
+| | 벡터 검색 | + LLM 리랭킹 |
+|---|---|---|
+| 검색 Top1 | 83% | 97~100% |
+| 문서에 없는 질문 거절 (검색 단계) | 12.5% | 87.5% |
+| 답변 핵심어 포함률 / 답변 단계 거절 | 100% / 100% | 100% / 100% |
+| 질문당 총비용 | $0.0253 | $0.0206 |
+
+## 리랭킹
+벡터 검색 상위 10개를 작은 모델(Haiku)이 질문과 함께 읽고 0~3점으로 다시 채점한다. 2점 미만은 버리고, 남는 게 없으면 "관련 결정 없음"으로 거절한다.
+점수는 도구 호출(tool use)로 받는다. 텍스트로 JSON을 요청했을 때는 모델이 설명을 붙여 출력 한도에서 잘렸다(38회 중 22회).
+`.env`의 `RERANK_ENABLED=true`로 켠다.
+
+## 초기 데이터 일괄 정리
+지난 스레드를 한 번에 `/정책정리` 한다. Discord에는 읽기만 하므로 흔적이 남지 않는다.
+```bash
+python -m scripts.batch_summarize data/links.txt          # 요약 → data/batch/review-*.json (저장 안 함)
+python -m scripts.batch_summarize --commit data/batch/review-*.json --approved-by 이름   # 검토 후 저장
+```
+승인일은 스레드 마지막 메시지 시각으로 저장된다 (과거 결정이 '오늘'로 기록되면 시간순이 깨지므로).
+
+## Docker 실행 (Mac 홈서버 / 클라우드 공통)
+```bash
+docker compose up -d --build        # api + bot
+docker compose ps                   # api가 (healthy)인지
+docker compose --profile tunnel up -d   # (선택) Cloudflare 임시 터널로 API 외부 공개. API_KEY 필수
+```
+봇은 Discord로 나가는 연결만 쓰므로 공유기 포트포워딩 없이 Mac에서 돌려도 팀원이 사용할 수 있다.
+외부 공개 시 `/policies/*`는 `X-API-Key`가 필요하다(`.env`의 `API_KEY`). 클라우드 배포 절차는 `docs/DEPLOY.md`.
 
 ## 테스트
 ```bash

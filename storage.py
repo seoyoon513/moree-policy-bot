@@ -54,8 +54,11 @@ def _write_local(record: dict, now: datetime) -> Path:
     return path
 
 
-async def save_decisions(decisions: list[dict], *, source: dict, approved_by: str) -> list[SaveResult]:
-    now = datetime.now(KST)
+async def save_decisions(decisions: list[dict], *, source: dict, approved_by: str,
+                         approved_at: datetime | None = None) -> list[SaveResult]:
+    """approved_at: 지난 스레드를 일괄 저장할 때 '결정이 난 시점'(스레드 마지막 메시지 시각)을 넣는다.
+    비우면 지금 시각. 이 값이 Notion '승인일'이 되고, 검색·답변의 시간순 정렬 기준이 된다."""
+    now = approved_at.astimezone(KST) if approved_at else datetime.now(KST)
     results = []
     for d in decisions:
         record = _build_record(d, source, approved_by, now)

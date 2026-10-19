@@ -35,7 +35,12 @@ class FakeEmbedder:
 
 class FakeGenerator:
     def answer(self, question, hits):
-        return f"최신 결론: {hits[0].title} [1]" if hits else "없음"
+        from app.rag.generator import GeneratedAnswer
+        from app.usage import Usage
+        if not hits:
+            return GeneratedAnswer("없음")
+        u = Usage("answer", "fake", input_tokens=1000, output_tokens=200, latency_ms=5).compute_cost()
+        return GeneratedAnswer(f"최신 결론: {hits[0].title} [1]", u)
 
 
 DOCS = [
@@ -108,6 +113,8 @@ def test_answer_endpoint(setup):
     body = r.json()
     assert body["answer"].startswith("최신 결론:")
     assert {s["page_id"] for s in body["sources"]} == {"p1", "p2"}  # 영역 필터로 북마크 제외
+    assert body["usage"]["input_tokens"] == 1000
+    assert body["usage"]["cost_usd"] == 0.006  # 1000*3/1M + 200*15/1M
 
 
 def test_admin_requires_token(setup):
@@ -145,3 +152,11 @@ def test_answer_returns_502_when_claude_fails(setup):
     r = TestClient(app).post("/policies/answers", json={"question": "리뷰 누가 쓸 수 있어?"})
     assert r.status_code == 502
     assert r.json()["detail"].startswith("Claude 호출 실패: APIConnectionError")
+
+
+def test_policies_require_api_key_when_configured(setup):
+    app.dependency_overrides[deps.get_settings] = lambda: Settings(_env_file=None, api_key="secret", rag_min_score=0.0)
+    c = TestClient(app)
+    assert c.get("/policies/search", params={"q": "북마크 정렬"}).status_code == 401
+    assert c.get("/policies/search", params={"q": "북마크 정렬"}, headers={"X-API-Key": "secret"}).status_code == 200
+    assert c.get("/health").status_code == 200  # 헬스체크는 인증 없이 (Docker healthcheck용)

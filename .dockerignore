@@ -1,0 +1,13 @@
+# 비밀값은 이미지에 굽지 않는다 → 실행 시 env_file로 주입
+.env
+# 데이터는 이미지가 아니라 볼륨에 둔다 (컨테이너를 지워도 남도록)
+data/
+eval/results/
+.venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store

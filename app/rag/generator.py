@@ -3,8 +3,11 @@
 시스템 프롬프트는 정책 조회 프로세스(시간순 정리 / 상태 구분 / 충돌 탐지 /
 최신 결정+근거+결정자+범위 / 미확정 사항 확인 질문)를 그대로 반영했다.
 """
+from dataclasses import dataclass
+
 from anthropic import Anthropic
 
+from app import usage as usage_log
 from app.rag.models import SearchHit
 
 SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <context> 안의 정책 문서만 근거로 답한다.
@@ -18,11 +21,20 @@ SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <c
 각 항목 끝에 근거 문서 번호를 [1], [2]처럼 표시한다."""
 
 
+NO_HITS_MESSAGE = "관련 정책 문서를 찾지 못했습니다. 키워드를 바꾸거나 영역 필터를 빼고 다시 시도해 주세요."
+
+
 def build_context(hits: list[SearchHit]) -> str:
     blocks = []
     for i, h in enumerate(hits, 1):
         blocks.append(f'<doc id="{i}" title="{h.title}" url="{h.url}">\n{h.text}\n</doc>')
     return "<context>\n" + "\n".join(blocks) + "\n</context>"
+
+
+@dataclass
+class GeneratedAnswer:
+    text: str
+    usage: usage_log.Usage | None = None   # 검색 결과가 없어 LLM을 안 불렀으면 None
 
 
 class AnswerGenerator:
@@ -31,13 +43,16 @@ class AnswerGenerator:
         self.model = model
         self.max_tokens = max_tokens
 
-    def answer(self, question: str, hits: list[SearchHit]) -> str:
+    def answer(self, question: str, hits: list[SearchHit]) -> GeneratedAnswer:
         if not hits:
-            return "관련 정책 문서를 찾지 못했습니다. 키워드를 바꾸거나 영역 필터를 빼고 다시 시도해 주세요."
-        msg = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": f"{build_context(hits)}\n\n질문: {question}"}],
-        )
-        return "".join(b.text for b in msg.content if b.type == "text")
+            # 검색이 비면 LLM을 부르지 않는다 → 토큰 0 (하한선이 비용도 줄이는 이유)
+            return GeneratedAnswer(NO_HITS_MESSAGE)
+        with usage_log.timer() as elapsed:
+            msg = self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": f"{build_context(hits)}\n\n질문: {question}"}],
+            )
+        u = usage_log.from_anthropic("answer", self.model, msg, elapsed())
+        return GeneratedAnswer("".join(b.text for b in msg.content if b.type == "text"), u)

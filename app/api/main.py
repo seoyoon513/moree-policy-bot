@@ -6,7 +6,7 @@
 from fastapi import Depends, FastAPI
 
 from app.api.deps import get_store
-from app.api.routers import policies, sync
+from app.api.routers import policies, sync, usage
 from app.rag.store import VectorStore
 
 app = FastAPI(
@@ -17,6 +17,7 @@ app = FastAPI(
 
 app.include_router(policies.router)
 app.include_router(sync.router)
+app.include_router(usage.router)
 
 
 @app.get("/health", tags=["ops"], summary="헬스체크 (Docker/Nginx에서 사용 예정)")
