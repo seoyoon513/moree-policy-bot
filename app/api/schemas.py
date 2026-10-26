@@ -55,7 +55,7 @@ class AnswerResponse(BaseModel):
 
 
 class SyncJobCreate(BaseModel):
-    force: bool = False   # True면 last_edited 무시하고 전부 재임베딩
+    force: bool = False   # True면 내용 해시 비교 없이 전부 재임베딩
 
 
 class SyncJob(BaseModel):

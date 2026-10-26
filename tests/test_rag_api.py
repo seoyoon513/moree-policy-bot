@@ -86,6 +86,20 @@ def test_incremental_ingest_skips_unchanged(setup):
     assert r.removed_chunks == 1
 
 
+def test_ingest_compares_content_not_last_edited(setup):
+    """노션 last_edited는 분 단위라 같은 분 안의 수정이 같은 값으로 온다 → 내용으로 비교해야 놓치지 않는다."""
+    from dataclasses import replace
+    store, emb, settings = setup
+    same_minute_edit = replace(DOCS[0], body="사진은 최대 10장.")  # last_edited는 그대로 t1
+    r = ingest_documents([same_minute_edit, *DOCS[1:]], emb, store, settings)
+    assert (r.updated_pages, r.skipped_pages) == (1, 2)
+    assert "10장" in store.col.get(where={"page_id": "p1"})["documents"][0]
+
+    touched_only = replace(same_minute_edit, metadata={**same_minute_edit.metadata, "last_edited": "t2"})
+    r = ingest_documents([touched_only, *DOCS[1:]], emb, store, settings)  # 본문 블록만 고친 경우: 인덱스 내용 같음
+    assert r.updated_pages == 0
+
+
 def test_retriever_ranks_and_filters(setup):
     store, emb, _ = setup
     ret = Retriever(emb, store)
@@ -160,3 +174,4 @@ def test_policies_require_api_key_when_configured(setup):
     assert c.get("/policies/search", params={"q": "북마크 정렬"}).status_code == 401
     assert c.get("/policies/search", params={"q": "북마크 정렬"}, headers={"X-API-Key": "secret"}).status_code == 200
     assert c.get("/health").status_code == 200  # 헬스체크는 인증 없이 (Docker healthcheck용)
+
