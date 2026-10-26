@@ -41,11 +41,12 @@ flowchart LR
 | 단계 | 파일 | 하는 일 |
 |---|---|---|
 | 로드 | `app/rag/notion_loader.py` | Notion DB(또는 `history.jsonl`)의 결정을 텍스트 + 메타데이터로 변환 |
-| 청킹 | `app/rag/chunker.py` | 800자 단위로 자르고 조각마다 `[정책] 주제 \| 영역 \| 상태` 헤더 부착 |
+| 로드 (정책서) | `app/rag/spec_index.py` | `NOTION_SPEC_PAGES`의 기능명세서를 정책 ID(표 한 행) 단위 문서로. 링크는 그 행으로 바로 감 |
+| 청킹 | `app/rag/chunker.py` | 800자 단위로 자르고 조각마다 `[정책] 주제 \| 영역 \| 상태`(정책서는 `[정책서] ID 이름 \| 화면 \| 버전`) 헤더 부착 |
 | 임베딩 | `app/rag/embedder.py` | OpenAI 또는 로컬(e5) 모델로 벡터화 |
-| 저장 | `app/rag/store.py` | Chroma(`data/chroma`)에 저장. 바뀐 결정만 재처리 |
-| 검색 | `app/rag/retriever.py` | 유사도 검색 + 영역/상태 필터 + 점수 하한선 + 결정당 1개 |
-| 생성 | `app/rag/generator.py` | 검색 결과를 `<context>`로 붙여 Claude가 근거 기반 답변 |
+| 저장 | `app/rag/store.py` | Chroma(`data/chroma`)에 저장. 청크 내용 해시가 바뀐 문서만 재처리 |
+| 검색 | `app/rag/retriever.py` | 유사도 검색(선택: + BM25 키워드 하이브리드 `keyword.py`) + 영역/상태 필터 + 점수 하한선 + 문서당 1개 + 재논의 짝 붙이기 |
+| 생성 | `app/rag/generator.py` | 검색 결과를 `<context>`로 붙여(정책서/결정기록 구분, 재논의 관계 표시) Claude가 근거 기반 답변 |
 
 ## 폴더 구성
 
@@ -109,6 +110,8 @@ cp .env.example .env
 | `POLICY_API_URL` | | 봇이 부를 API 주소, 기본 `http://localhost:8000` (Docker에서는 `http://api:8000`) |
 | `API_KEY` | 외부 공개 시 | `/policies/*` 인증 키 |
 | `RERANK_ENABLED` | | LLM 리랭킹 사용 (`RERANK_MODEL` 기본 `claude-haiku-5-5`) |
+| `HYBRID_ENABLED` | | 벡터 + BM25 하이브리드 검색 (기본 꺼짐) |
+| `NOTION_SPEC_PAGES` | | 기능영역별 정책서 페이지. 반영 제안과 검색 인덱스에 같이 쓴다 (`SPEC_INDEX_ENABLED=false`로 인덱싱만 끔) |
 | `SUMMARY_MAX_TOKENS` | | 요약 응답 최대 토큰, 기본 8192 |
 
 로컬 임베딩을 쓰려면 `pip install sentence-transformers` 후 `EMBEDDING_BACKEND=local`. 백엔드를 바꾸면 `python -m scripts.ingest --force`로 전체 재인덱싱한다.
@@ -157,6 +160,7 @@ Claude/OpenAI를 부를 때마다 `data/usage.jsonl`에 한 줄씩 기록된다 
 python -m scripts.eval_rag --sweep          # 검색: Hit@k · MRR · 거절 정확도 + 하한선별 비교
 python -m scripts.eval_rag --answers        # 답변: 핵심어 포함률 · 인용률 · 거절 정확도 + 1회당 비용
 python -m scripts.eval_rag --rerank --answers   # 리랭킹 켠 상태로 같은 평가 (전후 비교)
+python -m scripts.eval_rag --hybrid --rerank    # 하이브리드 검색 + 리랭킹
 ```
 결과는 문항 유형(`basic` · `exact` · `spec` · `trap` · `history` · `conflict` · `none`)별로도 나온다.
 
@@ -167,6 +171,23 @@ python -m scripts.eval_rag --rerank --answers   # 리랭킹 켠 상태로 같은
 | 문서에 없는 질문 거절 (검색 단계) | 12.5% | 87.5% |
 | 답변 핵심어 포함률 / 답변 단계 거절 | 100% / 100% | 100% / 100% |
 | 질문당 총비용 | $0.0253 | $0.0206 |
+
+### 측정 결과 (2026-10-26, 결정 99건 + 정책서 36행 · 59문항, 테스트 노션)
+검색 단계, k=5. 리랭크는 LLM이라 실행마다 1~2문항(±0.02~0.03) 흔들린다.
+
+| | 벡터 | 벡터 + 하이브리드 | + 리랭크 | + 리랭크 + 하이브리드 (후보 10) | (후보 15) |
+|---|---|---|---|---|---|
+| Top1 | 78.4% | 86.3% | **92.2%** | 90.2% | 92.2% |
+| Recall@5 | 93.8% | 97.7% | 96.7% | 97.4% | **98.0%** |
+| 문서에 없는 질문 거절 | 0% | 12.5% | **87.5%** | 75.0% | 62.5% |
+| 전체 정확도 | 83.1% | 88.1% | **98.3%** | 94.9% | 93.2% |
+| 리랭크 비용 (59문항) | - | - | $0.202 | $0.206 | $0.278 |
+
+- **정책서 인덱싱**: 정책서에만 있는 질문(`spec` 5문항) 0/5 → 5/5 (리랭크 기준).
+- **하이브리드**: 리랭크 없이 쓸 때는 모든 지표가 좋아진다. 리랭크와 같이 쓰면 정확 문자열 회수는 늘지만(정책서·결정이 엇갈린 문항에서 정책서 행 회수 1/3 → 2/3),
+  키워드 후보가 벡터 후보를 밀어내거나 후보가 늘어 리랭커 거절이 약해져 전체는 떨어졌다 → **기본 꺼짐 유지** (운영은 리랭크 사용).
+- 답변 평가(리랭크): 핵심어 포함률·인용률·거절 모두 100%, 답변 1회 평균 $0.023. 핵심어 지표는 포화돼 변별력이 없다
+  (정책서와 결정이 엇갈린 문항에서 정책서를 못 본 채 "정책서 근거 없음"이라고 답했는데도 통과) → LLM 채점(`--judge`)이나 유형별 체크가 필요.
 
 ## 리랭킹
 벡터 검색 상위 10개를 작은 모델(Haiku)이 질문과 함께 읽고 0~3점으로 다시 채점한다. 2점 미만은 버리고, 남는 게 없으면 "관련 결정 없음"으로 거절한다.
