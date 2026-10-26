@@ -7,8 +7,9 @@ services:
     image: policy-bot:latest
     env_file: .env
     environment:
-      CHROMA_PATH: /app/data/chroma
-      DATA_DIR: /app/data
+      CHROMA_PATH: /app/data/mori-rebuild/chroma
+      DATA_DIR: /app/data/mori-rebuild
+      USAGE_LOG_PATH: /app/data/usage.jsonl
     volumes:
       - ./data:/app/data            # 호스트 폴더 ↔ 컨테이너 폴더. 인덱스·히스토리·usage 로그 보존
     ports:
@@ -32,7 +33,8 @@ services:
       # 컨테이너끼리는 compose 네트워크 안에서 '서비스 이름'이 곧 호스트명(내부 DNS)
       # localhost 는 '봇 컨테이너 자기 자신'이라 여기선 쓰면 안 됨
       POLICY_API_URL: http://api:8000
-      DATA_DIR: /app/data
+      DATA_DIR: /app/data/mori-rebuild
+      USAGE_LOG_PATH: /app/data/usage.jsonl
     volumes:
       - ./data:/app/data
     # ports 없음: 봇은 디스코드 서버로 '나가는' 연결(WebSocket)만 쓰므로 들어오는 포트가 필요 없다
