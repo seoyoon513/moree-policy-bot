@@ -20,7 +20,9 @@ SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <c
 4. **확인 필요**: 최종결정이 아니거나 근거가 비어 있으면, 담당자에게 물어볼 질문을 1~3개.
 각 항목 끝에 근거 문서 번호를 [1], [2]처럼 표시한다.
 문서에 note="재논의 중 …"이 있으면 그 문서가 가리키는 최종결정은 아직 유효하다.
-최신 결론은 그 최종결정으로 쓰고 "현재 A, B로 변경 논의 중"처럼 재논의 내용을 바로 붙인다."""
+최신 결론은 그 최종결정으로 쓰고 "현재 A, B로 변경 논의 중"처럼 재논의 내용을 바로 붙인다.
+<conversation>이 있으면 질문의 지시어("이거", "그럼 비회원은?")를 이해하는 데만 쓴다.
+대화 내용은 근거가 아니다. 대화와 문서가 다르면 문서 기준으로 답하고 "대화 내용은 문서와 다름"이라고 짚는다."""
 
 
 NO_HITS_MESSAGE = "관련 정책 문서를 찾지 못했습니다. 키워드를 바꾸거나 영역 필터를 빼고 다시 시도해 주세요."
@@ -49,6 +51,11 @@ def build_context(hits: list[SearchHit]) -> str:
     return "<context>\n" + "\n".join(blocks) + "\n</context>"
 
 
+def build_user_message(question: str, hits: list[SearchHit], context: str | None = None) -> str:
+    conversation = f"<conversation>\n{context}\n</conversation>\n\n" if context else ""
+    return f"{build_context(hits)}\n\n{conversation}질문: {question}"
+
+
 @dataclass
 class GeneratedAnswer:
     text: str
@@ -61,7 +68,8 @@ class AnswerGenerator:
         self.model = model
         self.max_tokens = max_tokens
 
-    def answer(self, question: str, hits: list[SearchHit], user: str | None = None) -> GeneratedAnswer:
+    def answer(self, question: str, hits: list[SearchHit], user: str | None = None,
+               context: str | None = None) -> GeneratedAnswer:
         if not hits:
             # 검색이 비면 LLM을 부르지 않는다 → 토큰 0 (하한선이 비용도 줄이는 이유)
             return GeneratedAnswer(NO_HITS_MESSAGE)
@@ -70,7 +78,7 @@ class AnswerGenerator:
                 model=self.model,
                 max_tokens=self.max_tokens,
                 system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": f"{build_context(hits)}\n\n질문: {question}"}],
+                messages=[{"role": "user", "content": build_user_message(question, hits, context)}],
             )
         u = usage_log.from_anthropic("answer", self.model, msg, elapsed(), user=user)
         return GeneratedAnswer("".join(b.text for b in msg.content if b.type == "text"), u)

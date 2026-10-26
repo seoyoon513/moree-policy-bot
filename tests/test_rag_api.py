@@ -34,7 +34,7 @@ class FakeEmbedder:
 
 
 class FakeGenerator:
-    def answer(self, question, hits, user=None):
+    def answer(self, question, hits, user=None, context=None):
         from app.rag.generator import GeneratedAnswer
         from app.usage import Usage
         if not hits:
@@ -159,7 +159,7 @@ def test_answer_returns_502_when_claude_fails(setup):
     import httpx
 
     class BrokenGenerator:
-        def answer(self, question, hits, user=None):
+        def answer(self, question, hits, user=None, context=None):
             raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
 
     app.dependency_overrides[deps.get_generator] = lambda: BrokenGenerator()
@@ -217,3 +217,20 @@ def test_answer_context_without_pairs_has_no_note(setup):
     store, emb, _ = setup
     assert "note=" not in build_context(Retriever(emb, store).search("리뷰 작성 조건"))
 
+
+def test_answer_uses_context_tail_for_search_only(setup):
+    from app.api.routers.policies import SEARCH_CONTEXT_CHARS, search_query
+    assert search_query("이거 맞아?", None) == "이거 맞아?"
+    q = search_query("이거 맞아?", "오래된 잡담 " * 100 + "북마크 정렬 기준 얘기")
+    assert q.startswith("이거 맞아?\n") and q.endswith("북마크 정렬 기준 얘기")
+    assert len(q) <= len("이거 맞아?\n") + SEARCH_CONTEXT_CHARS
+    # 질문만으로는 주제가 없어도 맥락(최근 메시지)으로 맞는 문서를 찾는다
+    r = TestClient(app).post("/policies/answers", json={"question": "이거 정책이랑 맞아?", "context": "B: 북마크 정렬 어떻게 하지"})
+    assert r.status_code == 200 and r.json()["sources"][0]["page_id"] == "p3"
+
+
+def test_user_message_wraps_conversation_separately():
+    from app.rag.generator import build_user_message
+    assert "<conversation>" not in build_user_message("질문", [])
+    msg = build_user_message("그럼 비회원은?", [], "[이전 질문] 리뷰 누가 써?")
+    assert msg.index("<conversation>") < msg.index("질문: 그럼 비회원은?")

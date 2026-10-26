@@ -1,5 +1,6 @@
-"""/정책검색, /정책질문 슬래시 커맨드 + 승인 후 자동 재인덱싱.
+"""/정책검색 슬래시 커맨드 + 정책 API 호출 공용 함수 + 승인 후 자동 재인덱싱.
 봇은 RAG를 직접 돌리지 않고 FastAPI(app/api)만 호출한다.
+질문 답변은 /정책질문 대신 `@봇` 멘션으로 받는다 (mention.py).
 
 bot.py에서:
     from policy_search import register_policy_commands
@@ -44,7 +45,7 @@ def _get_session() -> aiohttp.ClientSession:
     return _session
 
 
-async def _call(method: str, path: str, **kwargs) -> tuple[int, dict]:
+async def call_api(method: str, path: str, **kwargs) -> tuple[int, dict]:
     try:
         headers = {**({"X-API-Key": API_KEY} if API_KEY else {}), **kwargs.pop("headers", {})}
         async with _get_session().request(method, f"{API_URL}{path}", headers=headers, **kwargs) as r:
@@ -61,7 +62,7 @@ async def _reindex() -> None:
     """동기화 작업 생성. 이미 돌고 있으면(409) 그 작업이 이번 결정을 못 읽었을 수 있으니 끝날 때까지 기다렸다 다시 요청."""
     await asyncio.sleep(REINDEX_INITIAL_DELAY)
     for _ in range(REINDEX_RETRIES):
-        code, data = await _call("POST", "/admin/sync-jobs", json={}, headers={"X-Admin-Token": ADMIN_TOKEN})
+        code, data = await call_api("POST", "/admin/sync-jobs", json={}, headers={"X-Admin-Token": ADMIN_TOKEN})
         if code == 202:
             log.info("재인덱싱 시작 (job=%s)", data.get("id"))
             return
@@ -81,6 +82,37 @@ def schedule_reindex() -> None:
     task = asyncio.create_task(_reindex())
     _background.add(task)  # 참조를 들고 있어야 GC로 중간에 사라지지 않음
     task.add_done_callback(_background.discard)
+
+
+DISCORD_LIMIT = 1900  # 메시지 2000자 제한에 여유
+
+
+def split_message(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
+    """줄 단위로 끊어서 나눈다 (링크·단어 중간에서 잘리지 않게). 한 줄이 limit보다 길면 그 줄만 강제로 자른다."""
+    parts, buf = [], ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if buf:
+                parts.append(buf)
+                buf = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        if buf and len(buf) + 1 + len(line) > limit:
+            parts.append(buf)
+            buf = line
+        else:
+            buf = f"{buf}\n{line}" if buf else line
+    if buf:
+        parts.append(buf)
+    return parts
+
+
+async def send_chunked(message: discord.Message, text: str) -> None:
+    """첫 조각은 질문에 답장으로, 나머지는 이어서 보낸다. 링크 미리보기는 끈다."""
+    parts = split_message(text)
+    await message.reply(parts[0], mention_author=False, suppress_embeds=True)
+    for part in parts[1:]:
+        await message.channel.send(part, suppress_embeds=True)
 
 
 def _tag(it: dict) -> str:
@@ -103,7 +135,7 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
             params["area"] = 영역.value
         if 상태:
             params["status"] = 상태.value
-        code, data = await _call("GET", "/policies/search", params=params)
+        code, data = await call_api("GET", "/policies/search", params=params)
         if code != 200:
             await interaction.followup.send(f"검색 실패 ({code}): {data.get('detail')}")
             return
@@ -120,34 +152,3 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
                 inline=False,
             )
         await interaction.followup.send(embed=embed)
-
-    @tree.command(name="정책질문", description="저장된 정책 결정을 근거로 질문에 답해요")
-    @app_commands.describe(질문="예: 오프라인으로 앱 실행하면 어디로 진입하기로 했지?", 영역="기능영역 필터 (선택)")
-    @app_commands.choices(영역=AREA_CHOICES)
-    async def ask(interaction: discord.Interaction, 질문: str, 영역: app_commands.Choice[str] | None = None):
-        await interaction.response.defer(thinking=True)
-        payload = {"question": 질문}
-        if 영역:
-            payload["area"] = 영역.value
-        # 사용자별 일일 제한을 위해 Discord 사용자 ID를 함께 보낸다 (헤더는 ASCII만 가능해서 이름 대신 ID)
-        code, data = await _call("POST", "/policies/answers", json=payload,
-                                 headers={"X-User-Id": str(interaction.user.id)})
-        if code == 429:
-            await interaction.followup.send(f"⏸️ {data.get('detail')}", ephemeral=True)
-            return
-        if code != 200:
-            await interaction.followup.send(f"답변 실패 ({code}): {data.get('detail')}")
-            return
-
-        sources = "\n".join(
-            f"[{i}] [{s['title']}]({s['url']})" if s.get("url") else f"[{i}] {s['title']}"
-            for i, s in enumerate(data["sources"], 1)
-        )
-        u = data.get("usage")
-        q = data.get("quota") or {}
-        quota = f" · 오늘 {q['used_today']}/{q['daily_limit']}회" if q.get("daily_limit") else ""
-        footer = (f"\n-# 토큰 in {u['input_tokens']:,} / out {u['output_tokens']:,} · ${u['cost_usd']:.4f} · {u['latency_ms'] / 1000:.1f}s{quota}"
-                  if u else "")
-        text = f"**Q. {질문}**\n\n{data['answer']}\n\n**근거 문서**\n{sources}{footer}"
-        for i in range(0, len(text), 1900):  # Discord 메시지 2000자 제한
-            await interaction.followup.send(text[i : i + 1900], suppress_embeds=True)

@@ -1,6 +1,8 @@
 """정책 관리 디스코드 봇 — MVP.
 
 /정책정리 : 현재 스레드의 논의를 정책 결정으로 요약 → 승인 시 저장
+/정책검색 : 저장된 결정 검색 (LLM 답변 없음)
+@봇 질문  : 저장된 결정을 근거로 자연어 질문에 답변 (mention.py, 읽기 전용)
 """
 import logging
 
@@ -10,6 +12,7 @@ from discord import app_commands
 from config import ANTHROPIC_API_KEY, DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
 from storage import resummary_context, thread_source
 from summarizer import SummaryError, ThreadMessage, summarize_thread
+from mention import handle_mention, is_addressed
 from policy_search import register_policy_commands
 from thread_reader import to_thread_messages
 from views import ApprovalView
@@ -39,9 +42,17 @@ class PolicyBot(discord.Client):
     async def on_ready(self):
         log.info("로그인: %s (%s)", self.user, self.user.id if self.user else "-")
 
+    async def on_message(self, message: discord.Message):
+        if self.user and is_addressed(message, self.user):
+            try:
+                await handle_mention(message, self.user)
+            except Exception:  # 한 질문의 실패가 봇 전체를 멈추지 않게
+                log.exception("멘션 질문 처리 실패 (message=%s)", message.id)
+                await message.reply("처리 중 오류가 났어요. 잠시 후 다시 물어봐 주세요.", mention_author=False)
+
 
 bot = PolicyBot()
-register_policy_commands(bot.tree)  # /정책검색, /정책질문 (FastAPI 서버 필요)
+register_policy_commands(bot.tree)  # /정책검색 (FastAPI 서버 필요)
 
 
 async def collect_thread_messages(thread: discord.Thread) -> list[ThreadMessage]:

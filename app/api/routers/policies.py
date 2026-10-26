@@ -32,6 +32,15 @@ def _to_hit(h: SearchHit, snippet_len: int = 300) -> PolicyHit:
     )
 
 
+# 검색어에 붙일 맥락 길이. "이거 정책이랑 맞아?"처럼 질문만으로는 주제가 없을 때를 위한 것이라
+# 길게 붙이면 오히려 질문의 핵심이 묻힌다 (맥락은 최근 것이 끝에 오도록 만든다)
+SEARCH_CONTEXT_CHARS = 300
+
+
+def search_query(question: str, context: str | None) -> str:
+    return f"{question}\n{context[-SEARCH_CONTEXT_CHARS:]}" if context else question
+
+
 @router.get("/search", response_model=SearchResponse, summary="정책 의미 검색")
 def search_policies(
     q: str = Query(min_length=2, max_length=200, description="검색어 (자연어 가능)"),
@@ -59,9 +68,9 @@ def answer_policy_question(
         # 429 Too Many Requests: 요청 자체는 올바르지만 허용량을 넘었다는 뜻
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(e)) from e
 
-    hits = retriever.search(body.question, k=body.k, area=body.area, status=body.status)
+    hits = retriever.search(search_query(body.question, body.context), k=body.k, area=body.area, status=body.status)
     try:
-        result = generator.answer(body.question, hits, user=x_user_id)
+        result = generator.answer(body.question, hits, user=x_user_id, context=body.context)
     except anthropic.APIError as e:
         # 우리 서버가 아니라 상위(upstream) 서비스가 실패한 것 → 502 Bad Gateway
         log.exception("Claude 호출 실패")

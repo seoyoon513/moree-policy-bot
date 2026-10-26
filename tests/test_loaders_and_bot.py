@@ -86,7 +86,7 @@ def test_policy_commands_register_on_client_tree():
     tree = app_commands.CommandTree(client)
     register_policy_commands(tree)
     names = {c.name for c in tree.get_commands()}
-    assert names == {"정책검색", "정책질문"}
+    assert names == {"정책검색"}  # /정책질문은 멘션 질문으로 대체 (mention.py)
 
 
 def test_reindex_waits_out_running_job(monkeypatch):
@@ -99,7 +99,7 @@ def test_reindex_waits_out_running_job(monkeypatch):
         calls.append((method, path, kw["headers"]["X-Admin-Token"]))
         return next(responses)
 
-    monkeypatch.setattr(ps, "_call", fake_call)
+    monkeypatch.setattr(ps, "call_api", fake_call)
     monkeypatch.setattr(ps, "ADMIN_TOKEN", "tok")
     monkeypatch.setattr(ps, "REINDEX_INITIAL_DELAY", 0)
     monkeypatch.setattr(ps, "REINDEX_RETRY_DELAY", 0)

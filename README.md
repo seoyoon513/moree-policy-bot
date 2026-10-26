@@ -4,7 +4,9 @@ Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, �
 
 - `/정책정리` — 스레드 논의를 Claude가 정책 결정으로 요약 → 요청자 승인 → Notion DB + 로컬 JSON 저장
 - `/정책검색` — 저장된 결정을 의미 기반으로 검색 (LLM 호출 없음)
-- `/정책질문` — 검색된 결정만 근거로 Claude가 답변 (최신 결론 · 히스토리 · 충돌 · 확인 필요 + 출처)
+- `@봇 질문` — 봇을 태그하고 자연어로 질문하면 검색된 결정만 근거로 Claude가 답변 (최신 결론 · 히스토리 · 충돌 · 확인 필요 + 출처).
+  스레드 최근 메시지와 답장한 이전 Q/A를 맥락으로 써서 "이거 정책이랑 맞아?", "그럼 비회원은?" 같은 질문도 받는다. 봇 답변에 답장하면 대화가 이어진다.
+  (예전 `/정책질문` 명령어를 대체)
 
 ## 구조
 
@@ -14,7 +16,7 @@ flowchart LR
 
     subgraph B[bot.py 프로세스]
         S["/정책정리<br/>summarizer · views · storage"]
-        P["policy_search.py<br/>/정책검색 · /정책질문"]
+        P["policy_search.py · mention.py<br/>/정책검색 · @봇 질문"]
     end
 
     subgraph A["FastAPI 프로세스 (uvicorn)"]
@@ -54,8 +56,9 @@ flowchart LR
 ├── views.py             # 승인·취소 버튼, 승인 후 재인덱싱 요청
 ├── storage.py           # 로컬 JSON + Notion 저장
 ├── notion_store.py      # Notion DB 스키마와 저장
-├── setup_notion.py      # Notion DB 최초 생성 (1회)
-├── policy_search.py     # /정책검색, /정책질문 → API 호출
+├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
+├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
+├── mention.py           # @봇 멘션 질문 → 맥락 수집 → /policies/answers
 ├── config.py            # 봇 설정 (기능영역, 상태 목록)
 ├── app/
 │   ├── config.py        # RAG/API 설정 (.env 공유)
@@ -94,7 +97,7 @@ cp .env.example .env
 | 키 | 필수 | 설명 |
 |---|---|---|
 | `DISCORD_TOKEN` | ✅ | 봇 토큰 |
-| `ANTHROPIC_API_KEY` | ✅ | 요약, `/정책질문` 답변 |
+| `ANTHROPIC_API_KEY` | ✅ | 요약, 멘션 질문 답변 |
 | `GUILD_ID` | 권장 | 지정하면 해당 서버에 커맨드 즉시 등록 |
 | `CLAUDE_MODEL` | | 기본 `claude-sonnet-5-5` |
 | `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` | | Notion 저장/조회. `setup_notion.py`가 ID를 채움 |
@@ -144,7 +147,7 @@ curl -X POST localhost:8000/admin/sync-jobs \
 ## 측정
 ### 토큰 사용량
 Claude/OpenAI를 부를 때마다 `data/usage.jsonl`에 한 줄씩 기록된다 (기능: `summarize` · `answer` · `embed_query` · `embed_index` · `judge`).
-- `/정책질문` 답변 하단에 이번 답변의 토큰/비용/시간 표시
+- 멘션 질문 답변 하단에 이번 답변의 토큰/비용/시간 표시
 - `GET /admin/usage?days=7` 로 기능별 합계·평균
 - 단가는 `.env`의 `PRICE_*` (USD/100만 토큰)
 

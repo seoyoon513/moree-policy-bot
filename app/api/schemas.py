@@ -24,6 +24,8 @@ class SearchResponse(BaseModel):
 
 class AnswerRequest(BaseModel):
     question: str = Field(min_length=2, max_length=500)
+    # 멘션 질문의 대화 맥락 (스레드 최근 메시지 · 답장한 이전 Q/A). 지시어 해석용이고 근거로 쓰지 않는다
+    context: str | None = Field(default=None, max_length=6000)
     area: str | None = None
     status: str | None = None
     k: int = Field(default=6, ge=1, le=20)
