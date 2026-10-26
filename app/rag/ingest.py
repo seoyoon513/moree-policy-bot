@@ -6,6 +6,7 @@
 """
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 
 from app.config import Settings
@@ -13,6 +14,8 @@ from app.rag.chunker import chunk_document
 from app.rag.embedder import Embedder
 from app.rag.models import Chunk, PolicyDocument
 from app.rag.store import VectorStore
+
+log = logging.getLogger("policy-api")
 
 # 해시에서 빼는 메타데이터: 인덱스 내용과 무관하게 바뀌는 값 (본문 블록만 고쳐도 last_edited는 바뀐다)
 _VOLATILE = {"last_edited"}
@@ -25,6 +28,7 @@ class IngestResult:
     skipped_pages: int
     chunks_written: int
     removed_chunks: int
+    spec_error: str | None = None   # 정책서를 못 읽었을 때 (결정 기록 인덱싱은 그대로 진행)
 
 
 def content_hash(chunks: list[Chunk]) -> str:
@@ -38,7 +42,8 @@ def _indexed_hashes(store: VectorStore) -> dict[str, str]:
 
 
 def ingest_documents(docs: list[PolicyDocument], embedder: Embedder, store: VectorStore,
-                     settings: Settings, force: bool = False) -> IngestResult:
+                     settings: Settings, force: bool = False, keep_page_ids: set[str] = frozenset()) -> IngestResult:
+    """keep_page_ids: 이번에 못 읽었지만 지우면 안 되는 문서 (정책서 로딩 실패 시 기존 정책서 청크)."""
     indexed = {} if force else _indexed_hashes(store)
     updated = skipped = written = 0
     for doc in docs:
@@ -53,12 +58,23 @@ def ingest_documents(docs: list[PolicyDocument], embedder: Embedder, store: Vect
         store.replace_page(doc.page_id, chunks, vectors)
         updated += 1
         written += len(chunks)
-    removed = store.delete_missing({d.page_id for d in docs})
+    removed = store.delete_missing({d.page_id for d in docs} | set(keep_page_ids))
     return IngestResult(len(docs), updated, skipped, written, removed)
 
 
 def ingest_from_source(settings: Settings, embedder: Embedder, store: VectorStore, force: bool = False) -> IngestResult:
-    """설정에 따라 Notion 또는 data/history.jsonl에서 읽어 인덱싱."""
+    """설정에 따라 Notion 또는 data/history.jsonl의 결정 기록 + 노션 정책서(설정돼 있으면)를 인덱싱."""
     from app.rag.notion_loader import build_loader
+    from app.rag.spec_index import SPEC_PREFIX, load_spec_documents
     docs = build_loader(settings).load()
-    return ingest_documents(docs, embedder, store, settings, force)
+    keep: set[str] = set()
+    spec_error = None
+    try:
+        docs += load_spec_documents(settings)
+    except Exception as e:  # noqa: BLE001 — 정책서 하나 때문에 방금 승인한 결정이 검색에 안 나오면 안 된다
+        log.warning("정책서 로딩 실패, 기존 정책서 인덱스 유지: %s", e)
+        spec_error = f"{type(e).__name__}: {e}"
+        keep = {pid for pid in _indexed_hashes(store) if pid.startswith(SPEC_PREFIX)}
+    result = ingest_documents(docs, embedder, store, settings, force, keep_page_ids=keep)
+    result.spec_error = spec_error
+    return result

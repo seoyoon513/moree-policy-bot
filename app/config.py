@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # 본문으로 쓸 속성들 (순서대로 "라벨: 값" 형태로 이어붙임)
     notion_body_props: list[str] = ["결정", "근거", "적용범위", "외부참조", "확인필요", "스레드명"]
 
+    # --- 정책서 인덱싱 (EXPERIMENTS 4-1) ---
+    # 봇의 NOTION_SPEC_PAGES와 같은 값: "북마크=<페이지 URL/ID>,리뷰=<...>" ("*"는 기본 정책서). 비우면 결정 DB만 인덱싱
+    notion_spec_pages: str = ""
+    spec_index_enabled: bool = True
+
     # --- 임베딩 ---
     # "openai" (가볍고 한국어 품질 좋음) | "local" (무료, sentence-transformers + torch 설치 필요)
     embedding_backend: str = "openai"
@@ -77,6 +82,18 @@ class Settings(BaseSettings):
     budget_hard_stop: bool = True     # 100% 넘으면 답변 차단
     # 알림을 보낼 Discord 웹훅 URL (채널 설정 → 연동 → 웹후크). 비우면 로그만 남김
     budget_alert_webhook_url: str = ""
+
+    def spec_pages(self) -> dict[str, list[str]]:
+        """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 ("*"는 기본 정책서라 영역에서 뺀다)."""
+        from app.rag.spec_loader import notion_id
+        out: dict[str, list[str]] = {}
+        for part in self.notion_spec_pages.replace("\n", ",").split(","):
+            area, _, page = part.partition("=")
+            if area.strip() and page.strip():
+                areas = out.setdefault(notion_id(page.strip()), [])
+                if area.strip() != "*":
+                    areas.append(area.strip())
+        return out
 
     def resolved_source(self) -> str:
         if self.rag_source != "auto":

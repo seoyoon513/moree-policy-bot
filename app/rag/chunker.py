@@ -8,8 +8,10 @@ from app.rag.models import Chunk, PolicyDocument
 
 def _header(doc: PolicyDocument) -> str:
     m = doc.metadata
-    parts = [f"[정책] {doc.title}"]
-    for label, key in (("영역", "area"), ("상태", "status"), ("결정일", "decided_at"), ("결정자", "decider"), ("적용범위", "scope")):
+    # 정책서(기능명세서)와 결정 기록은 같은 컬렉션에 들어가므로 머리말로 구분한다
+    parts = [f"[정책서] {doc.title}" if m.get("doc_type") == "정책서" else f"[정책] {doc.title}"]
+    for label, key in (("영역", "area"), ("상태", "status"), ("결정일", "decided_at"), ("결정자", "decider"), ("적용범위", "scope"),
+                       ("화면", "screen"), ("버전", "version_tags"), ("수정일", "spec_edited")):
         if m.get(key):
             parts.append(f"{label}: {m[key]}")
     return " | ".join(parts)

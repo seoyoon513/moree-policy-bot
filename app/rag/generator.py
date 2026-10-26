@@ -19,6 +19,9 @@ SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <c
 3. **충돌/불일치**: 문서끼리 내용이 다르면 무엇이 어떻게 다른지. 없으면 생략.
 4. **확인 필요**: 최종결정이 아니거나 근거가 비어 있으면, 담당자에게 물어볼 질문을 1~3개.
 각 항목 끝에 근거 문서 번호를 [1], [2]처럼 표시한다.
+문서 종류: kind="정책서"는 팀의 기준 문서(노션 기능명세서)이고, kind="결정기록"은 디스코드 논의를 정리한 기록이다.
+둘의 내용이 다르면 3번에 [충돌]로 쓰고, 결정기록의 결정일이 정책서 수정일보다 늦으면 "정책서 반영 전 변경일 수 있음"을 붙인다.
+정책서에는 상태·결정자가 없다. 정책서 근거만 있으면 "정책서 기준"이라고 쓰고 결정자는 비워 둔다.
 문서에 note="재논의 중 …"이 있으면 그 문서가 가리키는 최종결정은 아직 유효하다.
 최신 결론은 그 최종결정으로 쓰고 "현재 A, B로 변경 논의 중"처럼 재논의 내용을 바로 붙인다.
 <conversation>이 있으면 질문의 지시어("이거", "그럼 비회원은?")를 이해하는 데만 쓴다.
@@ -47,7 +50,8 @@ def build_context(hits: list[SearchHit]) -> str:
     blocks = []
     for i, h in enumerate(hits, 1):
         note = f' note="{notes[i]}"' if i in notes else ""
-        blocks.append(f'<doc id="{i}" title="{h.title}" url="{h.url}"{note}>\n{h.text}\n</doc>')
+        kind = "정책서" if h.metadata.get("doc_type") == "정책서" else "결정기록"
+        blocks.append(f'<doc id="{i}" kind="{kind}" title="{h.title}" url="{h.url}"{note}>\n{h.text}\n</doc>')
     return "<context>\n" + "\n".join(blocks) + "\n</context>"
 
 

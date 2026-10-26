@@ -29,6 +29,7 @@ def _to_hit(h: SearchHit, snippet_len: int = 300) -> PolicyHit:
         snippet=body[:snippet_len] + ("…" if len(body) > snippet_len else ""),
         area=h.metadata.get("area"), status=h.metadata.get("status"),
         decided_at=h.metadata.get("decided_at"), decider=h.metadata.get("decider"),
+        doc_type=h.metadata.get("doc_type"), policy_id=h.metadata.get("policy_id") or None,
     )
 
 

@@ -116,7 +116,7 @@ async def send_chunked(message: discord.Message, text: str) -> None:
 
 
 def _tag(it: dict) -> str:
-    return " · ".join(x for x in (it.get("area"), it.get("status"), it.get("decided_at"), it.get("decider")) if x)
+    return " · ".join(x for x in (it.get("doc_type"), it.get("area"), it.get("status"), it.get("decided_at"), it.get("decider")) if x)
 
 
 def register_policy_commands(tree: app_commands.CommandTree) -> None:

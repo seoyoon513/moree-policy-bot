@@ -14,6 +14,8 @@ class PolicyHit(BaseModel):
     status: str | None = None
     decided_at: str | None = None
     decider: str | None = None
+    doc_type: str | None = None    # "정책서"면 노션 기능명세서의 한 행, 비면 결정 기록
+    policy_id: str | None = None
 
 
 class SearchResponse(BaseModel):

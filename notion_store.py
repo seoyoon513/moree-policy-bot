@@ -6,10 +6,10 @@
 - 같은 스레드 재정리에서 '변경'이면 update_record()가 같은 페이지를 덮어쓰고 이전 버전은 본문 '변경 이력'에 남긴다
 """
 import logging
-import re
 
 from notion_client import AsyncClient
 
+from app.rag.spec_loader import notion_id
 from config import AREAS, NOTION_DATA_SOURCE_ID, NOTION_TOKEN, STATUSES
 
 log = logging.getLogger("policy-bot")
@@ -53,17 +53,7 @@ def get_client() -> AsyncClient:
     return _client
 
 
-def extract_id(value: str) -> str:
-    """페이지 URL이나 ID 문자열에서 32자리 ID를 뽑는다."""
-    path = value.split("?")[0].split("#")[0]
-    uuid_form = re.findall(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", path)
-    if uuid_form:
-        return uuid_form[-1].replace("-", "")
-    # 'Moree-1a2b...' 처럼 제목 뒤에 붙은 32자리: 앞이 hex가 아닌 위치에서만 매칭
-    found = re.findall(r"(?<![0-9a-fA-F])([0-9a-fA-F]{32})(?![0-9a-fA-F])", path)
-    if not found:
-        raise ValueError(f"Notion ID를 찾을 수 없어요: {value}")
-    return found[-1]
+extract_id = notion_id  # 페이지 URL이나 ID 문자열에서 32자리 ID (app.rag.spec_loader와 공용)
 
 
 def _rt(text: str | None) -> list[dict]:
