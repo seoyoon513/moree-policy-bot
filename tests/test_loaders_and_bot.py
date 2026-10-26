@@ -34,6 +34,8 @@ NOTION_PAGE = {
         "적용범위": {"type": "rich_text", "rich_text": _rt("행사 상세 > 리뷰 탭")},
         "결정일": {"type": "date", "date": {"start": "2026-10-11T09:00:00+09:00"}},
         "스레드": {"type": "url", "url": "https://discord.com/channels/1/3"},
+        "기록ID": {"type": "rich_text", "rich_text": _rt("rec00002")},
+        "재논의대상": {"type": "rich_text", "rich_text": _rt("rec00001")},
     },
 }
 
@@ -45,6 +47,7 @@ def test_notion_page_to_document_uses_bot_schema():
     assert d.metadata["decided_at"] == "2026-10-11"
     assert "결정: 발도장 인증한 사용자만 작성" in d.body
     assert "근거:" not in d.body  # 빈 속성은 생략
+    assert (d.metadata["record_id"], d.metadata["reopens"]) == ("rec00002", "rec00001")
 
 
 def test_notion_page_without_decided_at_uses_old_approved_date():
@@ -60,6 +63,7 @@ def test_jsonl_loader_reads_bot_history(tmp_path):
     d = docs[0]
     assert d.page_id == "local-abc12345"
     assert d.url == "https://discord.com/channels/1/2"
+    assert (d.metadata["record_id"], d.metadata["reopens"]) == ("abc12345", "")
     assert "확인필요: • 비로그인 오프라인은? → 담당자A" in d.body
     header = chunk_document(d)[0].text.splitlines()[0]
     assert header.startswith("[정책] 오프라인 실행 시 진입 플로우 | 영역: 회원가입·온보딩 | 상태: 최종결정")

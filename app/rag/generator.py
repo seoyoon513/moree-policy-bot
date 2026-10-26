@@ -18,16 +18,34 @@ SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <c
 2. **히스토리**: 같은 주제의 관련 정책을 시간순으로 (상태: 제안/논의중/최종결정 표시).
 3. **충돌/불일치**: 문서끼리 내용이 다르면 무엇이 어떻게 다른지. 없으면 생략.
 4. **확인 필요**: 최종결정이 아니거나 근거가 비어 있으면, 담당자에게 물어볼 질문을 1~3개.
-각 항목 끝에 근거 문서 번호를 [1], [2]처럼 표시한다."""
+각 항목 끝에 근거 문서 번호를 [1], [2]처럼 표시한다.
+문서에 note="재논의 중 …"이 있으면 그 문서가 가리키는 최종결정은 아직 유효하다.
+최신 결론은 그 최종결정으로 쓰고 "현재 A, B로 변경 논의 중"처럼 재논의 내용을 바로 붙인다."""
 
 
 NO_HITS_MESSAGE = "관련 정책 문서를 찾지 못했습니다. 키워드를 바꾸거나 영역 필터를 빼고 다시 시도해 주세요."
 
 
+def _reopen_notes(hits: list[SearchHit]) -> dict[int, str]:
+    """문서 번호 → 재논의 관계 설명. 짝이 같은 context 안에 있을 때만 번호로 가리킨다."""
+    by_record = {h.metadata.get("record_id"): i for i, h in enumerate(hits, 1) if h.metadata.get("record_id")}
+    notes: dict[int, str] = {}
+    for i, h in enumerate(hits, 1):
+        target = by_record.get(h.metadata.get("reopens"))
+        if target:
+            notes[i] = f"재논의 중 — [{target}]의 최종결정을 바꾸자는 논의. [{target}]은 아직 유효"
+            notes.setdefault(target, f"재논의 대상 — [{i}]에서 변경 논의 중")
+        elif h.metadata.get("reopens"):
+            notes[i] = "재논의 중 — 이전 최종결정을 바꾸자는 논의 (이전 문서는 검색되지 않음)"
+    return notes
+
+
 def build_context(hits: list[SearchHit]) -> str:
+    notes = _reopen_notes(hits)
     blocks = []
     for i, h in enumerate(hits, 1):
-        blocks.append(f'<doc id="{i}" title="{h.title}" url="{h.url}">\n{h.text}\n</doc>')
+        note = f' note="{notes[i]}"' if i in notes else ""
+        blocks.append(f'<doc id="{i}" title="{h.title}" url="{h.url}"{note}>\n{h.text}\n</doc>')
     return "<context>\n" + "\n".join(blocks) + "\n</context>"
 
 

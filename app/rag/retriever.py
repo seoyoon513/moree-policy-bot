@@ -19,8 +19,31 @@ class Retriever:
                one_per_page: bool = True) -> list[SearchHit]:
         if self.reranker:
             candidates = self._vector_search(query, self.rerank_candidates, area, status, one_per_page)
-            return self.reranker.rerank(query, candidates, k)
-        return self._vector_search(query, k, area, status, one_per_page)
+            hits = self.reranker.rerank(query, candidates, k)
+        else:
+            hits = self._vector_search(query, k, area, status, one_per_page)
+        return self.with_reopen_pairs(hits)
+
+    def with_reopen_pairs(self, hits: list[SearchHit]) -> list[SearchHit]:
+        """재논의 짝을 같이 넣는다. 한쪽만 보이면 "확정됐다" 또는 "아직 논의 중"으로 반쪽 답이 나온다.
+        - 재논의 기록이 걸리면 → 그것이 가리키는 이전 최종결정
+        - 최종결정이 걸리면 → 그것을 다시 논의 중인 기록
+        짝은 검색 점수와 무관하게 바로 뒤에 붙인다 (k를 넘을 수 있음). 필터(영역·상태)도 무시: 짝이 빠지면 오답이 된다."""
+        seen = {h.page_id for h in hits}
+        out: list[SearchHit] = []
+        for h in hits:
+            out.append(h)
+            wheres = []
+            if h.metadata.get("reopens"):
+                wheres.append({"record_id": h.metadata["reopens"]})
+            if h.metadata.get("record_id"):
+                wheres.append({"reopens": h.metadata["record_id"]})
+            for where in wheres:
+                pair = self.store.get_first(where)
+                if pair and pair.page_id not in seen:
+                    seen.add(pair.page_id)
+                    out.append(pair)
+        return out
 
     def _vector_search(self, query: str, k: int, area: str | None, status: str | None,
                        one_per_page: bool) -> list[SearchHit]:

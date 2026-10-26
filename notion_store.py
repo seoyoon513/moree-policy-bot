@@ -35,6 +35,8 @@ PROPERTIES = {
     "결정일": {"date": {}},  # 근거 메시지 중 가장 늦은 시각. 시간순 정렬 기준
     "정리일": {"date": {}},  # 승인 버튼을 누른 시각
     "기록ID": {"rich_text": {}},
+    # 재논의 기록이 가리키는 이전 최종결정의 기록ID. 본문 콜아웃만으로는 검색 로더(속성만 읽음)가 짝을 모른다
+    "재논의대상": {"rich_text": {}},
 }
 
 _client: AsyncClient | None = None
@@ -77,7 +79,9 @@ def _questions_text(questions: list[dict]) -> str:
 
 def build_properties(record: dict) -> dict:
     src = record["source"]
-    return {
+    # 재논의대상은 값이 있을 때만 보낸다: 이 속성이 생기기 전 DB(ensure_schema 전)에서도 일반 저장은 되게
+    extra = {"재논의대상": {"rich_text": _rt(record["reopens"])}} if record.get("reopens") else {}
+    return extra | {
         "주제": {"title": _rt(record["topic"])},
         "기능영역": {"select": {"name": record["area"]}},
         "상태": {"select": {"name": record["status"]}},
@@ -217,6 +221,16 @@ async def find_record_url(record_id: str) -> str | None:
     """기록ID로 결정 기록 페이지 URL을 찾는다 (저장된 기록을 나중에 정책서에 반영할 때 링크용)."""
     page = await find_record_page(record_id)
     return page.get("url") if page else None
+
+
+async def ensure_schema() -> list[str]:
+    """이미 만든 DB에 PROPERTIES 중 없는 속성을 추가하고, 추가한 이름을 돌려준다. 있는 속성은 건드리지 않는다."""
+    client = get_client()
+    ds = await client.data_sources.retrieve(data_source_id=NOTION_DATA_SOURCE_ID)
+    missing = {name: spec for name, spec in PROPERTIES.items() if name not in ds.get("properties", {})}
+    if missing:
+        await client.data_sources.update(data_source_id=NOTION_DATA_SOURCE_ID, properties=missing)
+    return list(missing)
 
 
 async def create_database(parent_page_id: str) -> dict:

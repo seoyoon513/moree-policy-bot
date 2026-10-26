@@ -62,6 +62,9 @@ def page_to_document(page: dict, s: Settings) -> PolicyDocument:
             "scope": p(s.notion_prop_scope),
             "thread_url": p("스레드"),
             "last_edited": page.get("last_edited_time", ""),
+            # 재논의 짝을 찾는 키: 재논의 기록은 reopens = 이전 최종결정의 record_id
+            "record_id": p("기록ID"),
+            "reopens": p("재논의대상"),
         },
     )
 
@@ -118,6 +121,8 @@ def record_to_document(r: dict) -> PolicyDocument:
             "scope": r.get("scope") or "",
             "thread_url": src.get("thread_url", ""),
             "last_edited": approved_at,  # append-only라 승인 시각이 곧 버전
+            "record_id": r.get("id", ""),
+            "reopens": r.get("reopens", ""),
         },
     )
 

@@ -9,7 +9,7 @@ class PolicyDocument:
     title: str
     url: str
     body: str
-    metadata: dict[str, str] = field(default_factory=dict)  # area, status, decider, decided_at, scope, last_edited
+    metadata: dict[str, str] = field(default_factory=dict)  # area, status, decider, decided_at, scope, last_edited, record_id, reopens
 
 
 @dataclass

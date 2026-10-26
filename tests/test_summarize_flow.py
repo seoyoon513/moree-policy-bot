@@ -133,6 +133,13 @@ def test_notion_properties_have_both_dates():
     assert "승인일" not in p
 
 
+def test_notion_properties_send_reopens_only_when_set():
+    # 재논의대상 속성이 없는 옛 DB에서도 일반 저장이 되도록 값이 있을 때만 보낸다
+    assert "재논의대상" not in notion_store.build_properties(_record())
+    p = notion_store.build_properties(_record(reopens="old00001"))
+    assert p["재논의대상"]["rich_text"][0]["text"]["content"] == "old00001"
+
+
 def test_notion_properties_fall_back_for_old_records():
     r = _record()
     del r["decided_at"]

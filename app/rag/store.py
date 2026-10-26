@@ -47,5 +47,15 @@ class VectorStore:
             ))
         return hits
 
+    def get_first(self, where: dict) -> SearchHit | None:
+        """조건에 맞는 페이지의 첫 청크 (재논의 짝처럼 검색 점수와 무관하게 같이 보여줄 문서용, score=0)."""
+        got = self.col.get(where=where, include=["documents", "metadatas"])
+        if not got["ids"]:
+            return None
+        i = min(range(len(got["ids"])), key=lambda j: got["ids"][j])  # chunk_id "{page}:0"이 앞
+        meta = got["metadatas"][i]
+        return SearchHit(page_id=meta["page_id"], title=meta.get("title", ""), url=meta.get("url", ""),
+                         text=got["documents"][i], score=0.0, metadata=meta)
+
     def count(self) -> int:
         return self.col.count()

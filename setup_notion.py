@@ -6,7 +6,7 @@
   3. .env에 NOTION_TOKEN, NOTION_PARENT_PAGE_ID(페이지 URL 그대로 붙여도 됨) 입력
 
 실행:
-  python setup_notion.py
+  python setup_notion.py      # 처음: DB 생성 / 이미 있으면: 새 속성만 추가
 """
 import asyncio
 import re
@@ -32,10 +32,13 @@ def update_env(values: dict[str, str]) -> None:
 async def main() -> None:
     if not NOTION_TOKEN:
         raise SystemExit(".env에 NOTION_TOKEN을 넣어 주세요.")
+    if NOTION_DATA_SOURCE_ID:
+        # 이미 만든 DB: 새로 생긴 속성만 추가한다 (예: 재논의대상). 새 DB가 필요하면 .env에서 그 줄을 지우고 다시 실행
+        added = await notion_store.ensure_schema()
+        print(f"✅ 속성 추가: {', '.join(added)}" if added else "✅ 스키마가 최신이에요. 추가할 속성이 없어요.")
+        return
     if not NOTION_PARENT_PAGE_ID:
         raise SystemExit(".env에 NOTION_PARENT_PAGE_ID(DB를 넣을 페이지 URL 또는 ID)를 넣어 주세요.")
-    if NOTION_DATA_SOURCE_ID:
-        raise SystemExit("이미 NOTION_DATA_SOURCE_ID가 있어요. 새로 만들려면 .env에서 그 줄을 지우고 다시 실행하세요.")
 
     parent_id = notion_store.extract_id(NOTION_PARENT_PAGE_ID)
     try:

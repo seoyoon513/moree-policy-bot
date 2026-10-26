@@ -175,3 +175,45 @@ def test_policies_require_api_key_when_configured(setup):
     assert c.get("/policies/search", params={"q": "북마크 정렬"}, headers={"X-API-Key": "secret"}).status_code == 200
     assert c.get("/health").status_code == 200  # 헬스체크는 인증 없이 (Docker healthcheck용)
 
+
+# --- 재논의 짝 (S-2) ---
+REOPEN_DOCS = [
+    PolicyDocument("r1", "북마크 폴더 개수 제한", "https://notion.so/r1", "폴더는 최대 10개까지 만들 수 있다.",
+                   {"area": "북마크", "status": "최종결정", "record_id": "aaa", "last_edited": "t1"}),
+    PolicyDocument("r2", "폴더 개수 상한 완화", "https://notion.so/r2", "상한을 20개로 늘리자는 의견, 서버 부하 확인 중.",
+                   {"area": "북마크", "status": "논의중", "record_id": "bbb", "reopens": "aaa", "last_edited": "t1"}),
+]
+
+
+@pytest.fixture
+def reopen_store():
+    store = VectorStore(None, f"test_{uuid.uuid4().hex[:8]}")
+    emb = FakeEmbedder()
+    ingest_documents(DOCS + REOPEN_DOCS, emb, store, Settings())
+    return store, emb
+
+
+def test_search_attaches_reopen_pair_both_ways(reopen_store):
+    store, emb = reopen_store
+    ret = Retriever(emb, store)
+    # 이전 최종결정만 걸려도 재논의 기록이 바로 뒤에 붙는다
+    hits = ret.search("폴더는 최대 10개까지", k=1)
+    assert [h.page_id for h in hits] == ["r1", "r2"]
+    # 재논의 기록만 걸려도 이전 최종결정이 붙는다 (상태 필터와 무관)
+    hits = ret.search("상한을 20개로 늘리자 서버 부하", k=1, status="논의중")
+    assert [h.page_id for h in hits] == ["r2", "r1"]
+
+
+def test_answer_context_marks_reopen_relation(reopen_store):
+    from app.rag.generator import build_context
+    store, emb = reopen_store
+    ctx = build_context(Retriever(emb, store).search("폴더는 최대 10개까지", k=1))
+    assert 'note="재논의 대상 — [2]에서 변경 논의 중"' in ctx
+    assert 'note="재논의 중 — [1]의 최종결정을 바꾸자는 논의. [1]은 아직 유효"' in ctx
+
+
+def test_answer_context_without_pairs_has_no_note(setup):
+    from app.rag.generator import build_context
+    store, emb, _ = setup
+    assert "note=" not in build_context(Retriever(emb, store).search("리뷰 작성 조건"))
+
