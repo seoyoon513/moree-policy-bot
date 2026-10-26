@@ -286,8 +286,24 @@ python -m pytest -q
 | `object_not_found` (Notion) | DB 페이지에 connection을 추가하지 않음 |
 | `insufficient_quota` (OpenAI) | API 크레딧 없음 |
 
+## 진행 중: Chroma ↔ Notion 동기화 정합성
+브랜치 `feat/sync-consistency` (**main 미반영**, 코드·테스트 완료, 실제 노션 연결 검증 전). 노션이 기준이고 Chroma는 검색용 사본이라, 사본이 어긋나는 경로를 막는 작업이다.
+
+| 문제 | 대응 |
+|---|---|
+| 정책서를 고쳐도 아무도 sync를 안 돌리면 인덱스가 낡음 | `SYNC_INTERVAL_MINUTES`(기본 0=끔, compose는 10)마다 자동 동기화. 진행 중인 작업이 있으면 그 주기는 건너뜀 |
+| 정책서 블록 캐시가 노션 `last_edited_time`(분 단위)만 봐서, 수정과 같은 분에 만든 캐시가 계속 낡은 채 재사용됨 | 캐시에 `fetched_at` 저장. 수정 시각 + 60초 이후에 가져온 캐시만 신뢰 |
+| 노션 장애로 빈 목록이 오면 인덱스가 통째로 지워짐 | 읽은 문서 0개, 또는 (페이지 10개 이상에서) 한 번에 50% 넘게 사라지면 삭제 생략 → 결과의 `delete_skipped`, 즉시 알림 |
+| 페이지 교체 중 검색에서 사라지거나, 중간 실패로 구멍이 남음 | 새 청크를 `upsert`한 뒤 남는 옛 청크만 삭제 |
+| 재시작하면 작업 이력이 사라지고 어긋남을 알 방법이 없음 | 끝난 작업을 `{DATA_DIR}/sync_jobs.jsonl`에 기록, `/health`에 `last_sync`, 문제 3회 연속이면 `BUDGET_ALERT_WEBHOOK_URL`로 알림 |
+
+남은 것:
+- 실제 노션에 붙여 1회 이상 확인 (지금 테스트는 가짜 임베더 + 메모리 Chroma)
+- API가 떠 있는 동안 `scripts/ingest.py`를 따로 돌리면 같은 Chroma 파일을 두 프로세스가 쓰게 됨 → 그때는 `POST /admin/sync-jobs`만 사용
+- 노션 웹훅으로 즉시 반영(고정 공개 URL 필요), 주기를 1~5분으로 줄일 때 변경 없는 작업은 이력 기록 생략
+
 ## 다음 단계
 진행 상태와 순서는 `docs/EXPERIMENTS.md`. 남은 큰 항목:
 - 아직 정리되지 않은 최근 디스코드 논의를 질문 때 함께 조회 (2단계)
 - 요약 품질 평가셋 (Q-6), 답변 평가를 LLM 채점으로 보강
-- 서버 배포와 `mem_limit`/`cpus` 제한, 동기화 작업 상태의 영속 저장 (`docs/DEPLOY.md`)
+- 서버 배포와 `mem_limit`/`cpus` 제한 (`docs/DEPLOY.md`). 동기화 작업 상태의 영속 저장은 위 "진행 중"에서 처리
