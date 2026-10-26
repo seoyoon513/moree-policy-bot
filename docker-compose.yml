@@ -10,6 +10,7 @@ services:
       CHROMA_PATH: /app/data/mori-rebuild/chroma
       DATA_DIR: /app/data/mori-rebuild
       USAGE_LOG_PATH: /app/data/usage.jsonl
+      SYNC_INTERVAL_MINUTES: "10"   # 노션 정책서 수정을 10분 안에 인덱스에 반영 (0이면 끔)
     volumes:
       - ./data:/app/data            # 호스트 폴더 ↔ 컨테이너 폴더. 인덱스·히스토리·usage 로그 보존
     ports:
