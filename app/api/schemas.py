@@ -38,11 +38,20 @@ class UsageInfo(BaseModel):
     cost_usd: float
 
 
+class QuotaInfo(BaseModel):
+    """사용량 현황. 제한이 꺼져 있으면 해당 값은 null."""
+    used_today: int
+    daily_limit: int | None = None
+    month_spend_usd: float
+    monthly_budget_usd: float | None = None
+
+
 class AnswerResponse(BaseModel):
     question: str
     answer: str
     sources: list[PolicyHit]
     usage: UsageInfo | None = None
+    quota: QuotaInfo | None = None
 
 
 class SyncJobCreate(BaseModel):

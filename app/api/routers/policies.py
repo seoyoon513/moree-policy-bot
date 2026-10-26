@@ -8,10 +8,12 @@ RESTful 설계 메모
 import logging
 
 import anthropic
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.api.deps import get_generator, get_retriever, require_api_key
-from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, SearchResponse, UsageInfo
+from app import limits
+from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, QuotaInfo, SearchResponse, UsageInfo
+from app.config import Settings, get_settings
 from app.rag.generator import AnswerGenerator
 from app.rag.models import SearchHit
 from app.rag.retriever import Retriever
@@ -47,15 +49,29 @@ def answer_policy_question(
     body: AnswerRequest,
     retriever: Retriever = Depends(get_retriever),
     generator: AnswerGenerator = Depends(get_generator),
+    s: Settings = Depends(get_settings),
+    x_user_id: str | None = Header(default=None, description="호출한 사용자 ID (봇이 Discord 사용자 ID를 넣음)"),
 ):
+    # 검색(리랭크)도 돈이 들므로 제한 확인을 가장 먼저 한다
+    try:
+        quota = limits.check_answer_allowed(x_user_id, s)
+    except limits.LimitExceeded as e:
+        # 429 Too Many Requests: 요청 자체는 올바르지만 허용량을 넘었다는 뜻
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(e)) from e
+
     hits = retriever.search(body.question, k=body.k, area=body.area, status=body.status)
     try:
-        result = generator.answer(body.question, hits)
+        result = generator.answer(body.question, hits, user=x_user_id)
     except anthropic.APIError as e:
         # 우리 서버가 아니라 상위(upstream) 서비스가 실패한 것 → 502 Bad Gateway
         log.exception("Claude 호출 실패")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Claude 호출 실패: {type(e).__name__}: {e}") from e
+    if result.usage:  # LLM을 실제로 불렀을 때만 횟수·비용이 늘어난다
+        quota["used_today"] += 1
+        quota["month_spend_usd"] = round(quota["month_spend_usd"] + result.usage.cost_usd, 4)
+        limits.maybe_alert(s)
     return AnswerResponse(
+        quota=QuotaInfo(**quota),
         question=body.question,
         answer=result.text,
         sources=[_to_hit(h, 150) for h in hits],

@@ -62,6 +62,7 @@ class Usage:
     cache_write_tokens: int = 0
     latency_ms: int = 0
     cost_usd: float = 0.0
+    user: str | None = None  # 호출한 사람 (Discord 사용자 ID). 사용자별 일일 제한에 쓴다
     ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def compute_cost(self) -> "Usage":
@@ -90,7 +91,7 @@ def record(u: Usage) -> Usage:
     return u
 
 
-def from_anthropic(feature: str, model: str, resp, latency_ms: int) -> Usage:
+def from_anthropic(feature: str, model: str, resp, latency_ms: int, user: str | None = None) -> Usage:
     """anthropic Message 응답의 usage → Usage 기록."""
     us = getattr(resp, "usage", None)
     return record(Usage(
@@ -100,6 +101,7 @@ def from_anthropic(feature: str, model: str, resp, latency_ms: int) -> Usage:
         cache_read_tokens=getattr(us, "cache_read_input_tokens", 0) or 0,
         cache_write_tokens=getattr(us, "cache_creation_input_tokens", 0) or 0,
         latency_ms=latency_ms,
+        user=user,
     ))
 
 

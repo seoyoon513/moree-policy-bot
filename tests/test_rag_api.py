@@ -34,7 +34,7 @@ class FakeEmbedder:
 
 
 class FakeGenerator:
-    def answer(self, question, hits):
+    def answer(self, question, hits, user=None):
         from app.rag.generator import GeneratedAnswer
         from app.usage import Usage
         if not hits:
@@ -145,7 +145,7 @@ def test_answer_returns_502_when_claude_fails(setup):
     import httpx
 
     class BrokenGenerator:
-        def answer(self, question, hits):
+        def answer(self, question, hits, user=None):
             raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
 
     app.dependency_overrides[deps.get_generator] = lambda: BrokenGenerator()

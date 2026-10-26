@@ -129,7 +129,12 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
         payload = {"question": 질문}
         if 영역:
             payload["area"] = 영역.value
-        code, data = await _call("POST", "/policies/answers", json=payload)
+        # 사용자별 일일 제한을 위해 Discord 사용자 ID를 함께 보낸다 (헤더는 ASCII만 가능해서 이름 대신 ID)
+        code, data = await _call("POST", "/policies/answers", json=payload,
+                                 headers={"X-User-Id": str(interaction.user.id)})
+        if code == 429:
+            await interaction.followup.send(f"⏸️ {data.get('detail')}", ephemeral=True)
+            return
         if code != 200:
             await interaction.followup.send(f"답변 실패 ({code}): {data.get('detail')}")
             return
@@ -139,7 +144,9 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
             for i, s in enumerate(data["sources"], 1)
         )
         u = data.get("usage")
-        footer = (f"\n-# 토큰 in {u['input_tokens']:,} / out {u['output_tokens']:,} · ${u['cost_usd']:.4f} · {u['latency_ms'] / 1000:.1f}s"
+        q = data.get("quota") or {}
+        quota = f" · 오늘 {q['used_today']}/{q['daily_limit']}회" if q.get("daily_limit") else ""
+        footer = (f"\n-# 토큰 in {u['input_tokens']:,} / out {u['output_tokens']:,} · ${u['cost_usd']:.4f} · {u['latency_ms'] / 1000:.1f}s{quota}"
                   if u else "")
         text = f"**Q. {질문}**\n\n{data['answer']}\n\n**근거 문서**\n{sources}{footer}"
         for i in range(0, len(text), 1900):  # Discord 메시지 2000자 제한

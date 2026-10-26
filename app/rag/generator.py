@@ -43,7 +43,7 @@ class AnswerGenerator:
         self.model = model
         self.max_tokens = max_tokens
 
-    def answer(self, question: str, hits: list[SearchHit]) -> GeneratedAnswer:
+    def answer(self, question: str, hits: list[SearchHit], user: str | None = None) -> GeneratedAnswer:
         if not hits:
             # 검색이 비면 LLM을 부르지 않는다 → 토큰 0 (하한선이 비용도 줄이는 이유)
             return GeneratedAnswer(NO_HITS_MESSAGE)
@@ -54,5 +54,5 @@ class AnswerGenerator:
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": f"{build_context(hits)}\n\n질문: {question}"}],
             )
-        u = usage_log.from_anthropic("answer", self.model, msg, elapsed())
+        u = usage_log.from_anthropic("answer", self.model, msg, elapsed(), user=user)
         return GeneratedAnswer("".join(b.text for b in msg.content if b.type == "text"), u)

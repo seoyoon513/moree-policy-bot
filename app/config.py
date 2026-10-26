@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     # 터널 등으로 외부에 공개할 때는 반드시 설정: 키 없이 호출되면 누구나 Claude 비용을 쓰게 된다
     api_key: str = ""
 
+    # --- 사용량 제한 (app/limits.py) ---
+    # 사용자별 하루 답변 횟수. LLM을 실제로 부른 답변만 센다 (근거가 없어 거절한 답은 무료라 제외). 0 = 제한 없음
+    daily_answer_limit: int = 30
+    # 월 예산(USD). 이번 달 전체 비용(요약·리랭크·답변·임베딩)이 기준. 0 = 예산 없음
+    monthly_budget_usd: float = 0.0
+    budget_alert_ratio: float = 0.8   # 이 비율을 넘으면 알림 (1회)
+    budget_hard_stop: bool = True     # 100% 넘으면 답변 차단
+    # 알림을 보낼 Discord 웹훅 URL (채널 설정 → 연동 → 웹후크). 비우면 로그만 남김
+    budget_alert_webhook_url: str = ""
+
     def resolved_source(self) -> str:
         if self.rag_source != "auto":
             return self.rag_source
