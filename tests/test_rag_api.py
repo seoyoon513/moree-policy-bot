@@ -137,7 +137,7 @@ def test_admin_requires_token(setup):
 
 def test_health(setup):
     r = TestClient(app).get("/health")
-    assert r.json() == {"status": "ok", "indexed_chunks": 3}
+    assert r.json() == {"status": "ok", "indexed_chunks": 3, "last_sync": None}
 
 
 def test_min_score_drops_unrelated_results(setup):

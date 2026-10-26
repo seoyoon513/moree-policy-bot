@@ -29,6 +29,12 @@ class IngestResult:
     chunks_written: int
     removed_chunks: int
     spec_error: str | None = None   # 정책서를 못 읽었을 때 (결정 기록 인덱싱은 그대로 진행)
+    delete_skipped: str | None = None   # 삭제 가드가 발동했을 때 사유 (소스 장애로 인덱스가 통째로 지워지는 걸 막음)
+
+
+# 삭제 가드: 인덱스 페이지가 이 수 이상일 때, 한 번에 이 비율 넘게 사라지면 소스 장애로 보고 삭제를 건너뛴다
+_GUARD_MIN_PAGES = 10
+_GUARD_MAX_RATIO = 0.5
 
 
 def content_hash(chunks: list[Chunk]) -> str:
@@ -58,8 +64,21 @@ def ingest_documents(docs: list[PolicyDocument], embedder: Embedder, store: Vect
         store.replace_page(doc.page_id, chunks, vectors)
         updated += 1
         written += len(chunks)
-    removed = store.delete_missing({d.page_id for d in docs} | set(keep_page_ids))
-    return IngestResult(len(docs), updated, skipped, written, removed)
+    alive = {d.page_id for d in docs} | set(keep_page_ids)
+    stale_ids, stale_pages, indexed_pages = store.stale_chunks(alive)
+    skip_reason = None
+    if stale_ids and not alive:
+        skip_reason = f"읽은 문서가 0개 (인덱스 {indexed_pages}페이지) — 소스 장애로 보고 삭제 생략"
+    elif stale_ids and indexed_pages >= _GUARD_MIN_PAGES and stale_pages / indexed_pages > _GUARD_MAX_RATIO:
+        skip_reason = f"{indexed_pages}페이지 중 {stale_pages}페이지가 한 번에 사라짐 — 소스 장애로 보고 삭제 생략"
+    removed = 0
+    if skip_reason:
+        log.warning("인덱스 삭제 생략: %s", skip_reason)
+    else:
+        removed = store.delete_missing(alive)
+    result = IngestResult(len(docs), updated, skipped, written, removed)
+    result.delete_skipped = skip_reason
+    return result
 
 
 def ingest_from_source(settings: Settings, embedder: Embedder, store: VectorStore, force: bool = False) -> IngestResult:

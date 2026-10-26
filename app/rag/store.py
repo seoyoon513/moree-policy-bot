@@ -35,22 +35,35 @@ class VectorStore:
         return hits
 
     def replace_page(self, page_id: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:
-        """페이지가 수정되면 청크 개수가 달라질 수 있으니, 기존 청크를 지우고 다시 넣는다."""
-        self.col.delete(where={"page_id": page_id})
+        """페이지가 수정되면 청크 개수가 달라질 수 있다. 새 청크를 먼저 upsert하고 남는 옛 청크만 지운다.
+        (먼저 지우면 그 사이 검색에서 페이지가 사라지고, add가 실패하면 구멍이 남는다. chunk_id가 결정적이라 가능)"""
+        if chunks:
+            self.col.upsert(
+                ids=[c.chunk_id for c in chunks],
+                documents=[c.text for c in chunks],
+                embeddings=vectors,
+                metadatas=[c.metadata for c in chunks],
+            )
+        keep = {c.chunk_id for c in chunks}
+        old = [cid for cid in self.col.get(where={"page_id": page_id}, include=[])["ids"] if cid not in keep]
+        if old:
+            self.col.delete(ids=old)
         self._keyword = None
-        if not chunks:
-            return
-        self.col.add(
-            ids=[c.chunk_id for c in chunks],
-            documents=[c.text for c in chunks],
-            embeddings=vectors,
-            metadatas=[c.metadata for c in chunks],
-        )
+
+    def stale_chunks(self, alive_page_ids: set[str]) -> tuple[list[str], int, int]:
+        """살아 있는 문서 목록에 없는 청크 → (청크 id들, 그 페이지 수, 인덱스 전체 페이지 수)."""
+        got = self.col.get(include=["metadatas"])
+        pages = {m.get("page_id") for m in got["metadatas"]}
+        stale_ids, stale_pages = [], set()
+        for cid, m in zip(got["ids"], got["metadatas"]):
+            if m.get("page_id") not in alive_page_ids:
+                stale_ids.append(cid)
+                stale_pages.add(m.get("page_id"))
+        return stale_ids, len(stale_pages), len(pages)
 
     def delete_missing(self, alive_page_ids: set[str]) -> int:
         """Notion에서 삭제된 페이지의 청크 정리."""
-        got = self.col.get(include=["metadatas"])
-        stale = [cid for cid, m in zip(got["ids"], got["metadatas"]) if m.get("page_id") not in alive_page_ids]
+        stale, _, _ = self.stale_chunks(alive_page_ids)
         if stale:
             self.col.delete(ids=stale)
             self._keyword = None

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 POLICY_ID_RE = re.compile(r"^[A-Z]{2,4}-\d{2}(?:-\d{2})?$")
@@ -225,6 +226,18 @@ async def fetch_tree(client, block_id: str) -> list[dict]:
     return out
 
 
+def _cache_settled(cached: dict) -> bool:
+    """캐시를 믿어도 되는가. 노션 last_edited_time은 분 단위라, 수정과 같은 분 안에 만든 캐시는
+    그 분의 뒤쪽 수정을 놓쳤을 수 있다 (시각이 같아 보여서 영원히 낡은 채로 남음).
+    수정 시각 + 1분 이후에 가져온 캐시만 믿고, 아니면 다시 가져온다."""
+    try:
+        edited = datetime.fromisoformat(cached["last_edited"].replace("Z", "+00:00"))
+        fetched = datetime.fromisoformat(cached["fetched_at"])
+    except (KeyError, ValueError, AttributeError):
+        return False   # fetched_at이 없는 옛 캐시는 한 번 다시 가져온다
+    return fetched >= edited + timedelta(seconds=60)
+
+
 async def load_spec(client, page_id: str, cache_dir: str | Path) -> SpecDocument:
     """페이지 수정 시각이 캐시와 같으면 블록을 다시 가져오지 않는다 (명세서 하나가 수십 번의 API 호출)."""
     page = await client.pages.retrieve(page_id=page_id)
@@ -235,13 +248,14 @@ async def load_spec(client, page_id: str, cache_dir: str | Path) -> SpecDocument
             cached = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             cached = None
-    if cached and cached.get("last_edited") == page.get("last_edited_time"):
+    if cached and cached.get("last_edited") == page.get("last_edited_time") and _cache_settled(cached):
         blocks = cached["blocks"]
     else:
+        fetched_at = datetime.now(timezone.utc).isoformat()
         blocks = await fetch_tree(client, page["id"])
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"last_edited": page.get("last_edited_time"), "blocks": blocks},
-                                   ensure_ascii=False), encoding="utf-8")
+        path.write_text(json.dumps({"last_edited": page.get("last_edited_time"), "fetched_at": fetched_at,
+                                    "blocks": blocks}, ensure_ascii=False), encoding="utf-8")
     return parse_tree(page, blocks)
 
 

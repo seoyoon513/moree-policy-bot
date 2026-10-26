@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     chroma_path: str = "data/chroma"
     chroma_collection: str = "policies"
 
+    # --- 주기 동기화: 노션 정책서 수정이 인덱스에 따라오게 한다. 0 = 끔 (결정 기록 승인 시 재인덱싱은 별개로 동작) ---
+    sync_interval_minutes: int = 0
+
     # --- 검색 ---
     # 이 점수(cosine 유사도) 미만인 결과는 버린다. 결과가 너무 적으면 낮추고, 엉뚱하면 높이기
     rag_min_score: float = 0.3
