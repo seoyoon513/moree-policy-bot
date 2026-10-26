@@ -8,21 +8,16 @@
 """
 import argparse
 import asyncio
-import json
-from pathlib import Path
 
 import notion_store
-from config import DATA_DIR
 from spec_reflect import format_outcomes, reflect_records
+from storage import current_records
 
 
 def load(records: list[str], approved_by: str | None) -> list[dict]:
-    out = []
-    for line in (Path(DATA_DIR) / "history.jsonl").read_text(encoding="utf-8").splitlines():
-        r = json.loads(line)
-        if (records and r["id"] in records) or (approved_by and r.get("approved_by") == approved_by):
-            out.append(r)
-    return out
+    """각 기록의 현재 버전 중 조건에 맞는 것."""
+    return [r for r in current_records()
+            if (records and r["id"] in records) or (approved_by and r.get("approved_by") == approved_by)]
 
 
 async def run(recs: list[dict]) -> None:

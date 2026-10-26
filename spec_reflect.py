@@ -161,7 +161,9 @@ def _mentions() -> list[dict]:
 
 
 def marker(record: dict) -> str:
-    return f"기록 {record['id']}"
+    """제안에 붙이는 표시. 재정리로 덮어쓴 기록(v2~)은 버전까지 붙여 같은 버전만 중복으로 본다."""
+    v = record.get("version", 1)
+    return f"기록 {record['id']}" + (f" v{v}" if v > 1 else "")
 
 
 def proposal_rich_text(record: dict, match: Match, notion_url: str | None, *, title: str,
@@ -183,14 +185,31 @@ def proposal_rich_text(record: dict, match: Match, notion_url: str | None, *, ti
     return parts
 
 
-async def _already_proposed(client, block_id: str, record: dict) -> bool:
-    """같은 기록으로 같은 블록에 이미 댓글을 달았으면 다시 달지 않는다 (재시도·중복 클릭 대비)."""
+def _comment_text(c: dict) -> str:
+    return "".join(t.get("plain_text", "") for t in c.get("rich_text", []))
+
+
+async def post_proposal(client, target_id: str, record: dict, rich_text: list[dict], *, page: bool = False) -> str | None:
+    """블록(또는 페이지)에 제안 댓글을 단다. 돌려주는 값은 결과 메모.
+    - 같은 기록·같은 버전 제안이 이미 있으면 달지 않는다 (재시도·중복 클릭 대비)
+    - 재정리로 바뀐 기록(v2~)이고 이전 버전 제안이 있으면 그 댓글 스레드에 답글 → PM이 한 스레드에서 변경 이력을 본다"""
     try:
-        res = await client.comments.list(block_id=block_id)
+        comments = (await client.comments.list(block_id=target_id)).get("results", [])
     except Exception:
-        return False
-    return any(marker(record) in "".join(t.get("plain_text", "") for t in c.get("rich_text", []))
-               for c in res.get("results", []))
+        comments = []
+    if any(marker(record) in _comment_text(c) for c in comments):
+        return "이미 같은 기록으로 제안함"
+    earlier = next((c for c in comments if f"기록 {record['id']}" in _comment_text(c)), None)
+    if earlier and record.get("version", 1) > 1:
+        await client.comments.create(discussion_id=earlier["discussion_id"], rich_text=rich_text)
+        return "이전 제안 스레드에 답글"
+    parent = {"page_id": target_id} if page else {"block_id": target_id}
+    await client.comments.create(parent=parent, rich_text=rich_text)
+    return None
+
+
+def _title(record: dict, base: str) -> str:
+    return f"{base} (변경 v{record['version']})" if record.get("version", 1) > 1 else base
 
 
 async def apply_match(client, doc: SpecDocument, record: dict, match: Match, notion_url: str | None) -> Outcome:
@@ -205,11 +224,8 @@ async def apply_match(client, doc: SpecDocument, record: dict, match: Match, not
     if match.action == "modify":
         entry: SpecEntry = doc.by_id()[match.policy_id]
         out.url = block_url(doc, entry.block_id)
-        if await _already_proposed(client, entry.block_id, record):
-            out.note = "이미 같은 기록으로 제안함"
-            return out
-        await client.comments.create(parent={"block_id": entry.block_id},
-                                     rich_text=proposal_rich_text(record, match, notion_url, title="정책봇 반영 제안"))
+        rich = proposal_rich_text(record, match, notion_url, title=_title(record, "정책봇 반영 제안"))
+        out.note = await post_proposal(client, entry.block_id, record, rich) or out.note
         return out
 
     if match.action == "new":
@@ -218,7 +234,8 @@ async def apply_match(client, doc: SpecDocument, record: dict, match: Match, not
             block_id=anchor.parent_id,
             position={"type": "after_block", "after_block": {"id": anchor.table_id}},
             children=[{"type": "callout", "callout": {
-                "rich_text": proposal_rich_text(record, match, notion_url, title=f"정책봇 제안 · 신규 ({match.screen_id})",
+                "rich_text": proposal_rich_text(record, match, notion_url,
+                                                title=_title(record, f"정책봇 제안 · 신규 ({match.screen_id})"),
                                                 with_mentions=False),
                 "icon": {"type": "emoji", "emoji": "💡"}, "color": CALLOUT_COLOR}}],
         )
@@ -230,8 +247,8 @@ async def apply_match(client, doc: SpecDocument, record: dict, match: Match, not
         return out
 
     # unknown → 페이지 댓글
-    await client.comments.create(parent={"page_id": doc.page_id},
-                                 rich_text=proposal_rich_text(record, match, notion_url, title="정책봇 반영 제안 (위치 확인 필요)"))
+    rich = proposal_rich_text(record, match, notion_url, title=_title(record, "정책봇 반영 제안 (위치 확인 필요)"))
+    out.note = await post_proposal(client, doc.page_id, record, rich, page=True) or out.note
     out.url = doc.url
     return out
 
@@ -360,6 +377,9 @@ LABELS = {"modify": "📝 행 댓글", "new": "➕ 새 항목 제안", "unknown"
           "skip": "➖ 정책서 대상 아님", "inbox": "📥 미분류 제안", "skipped": "⏭️ 건너뜀", "error": "⚠️ 실패"}
 
 
+VISIBLE_NOTES = {"이전 제안 스레드에 답글", "이미 같은 기록으로 제안함", "이미 미분류 페이지에 있음"}
+
+
 def format_outcomes(outcomes: list[Outcome]) -> list[str]:
     """디스코드 승인 메시지에 붙일 줄."""
     if not outcomes:
@@ -369,6 +389,7 @@ def format_outcomes(outcomes: list[Outcome]) -> list[str]:
         where = o.policy_id or o.screen_id or ""
         label = f"{LABELS[o.action]} {where}".strip()
         text = f"[{label}]({o.url})" if o.url else label
-        tail = f" — {o.note}" if o.action in ("skipped", "error") and o.note else ""
+        shown = o.action in ("skipped", "error") or o.note in VISIBLE_NOTES
+        tail = f" — {o.note}" if shown and o.note else ""
         lines.append(f"• {text} · {o.topic}{tail}")
     return lines

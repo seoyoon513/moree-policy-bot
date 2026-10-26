@@ -15,12 +15,13 @@ import notion_store
 from app.rag.spec_loader import load_spec
 from config import DATA_DIR, NOTION_SPEC_PAGES, SPEC_REFLECT_STATUSES
 from spec_reflect import match_records
+from storage import current_records
 
 
 def load_records(approved_by: str | None, threads: list[str]) -> list[dict]:
+    """각 기록의 현재 버전 중 조건에 맞는 것 (재정리로 덮어쓴 이전 버전은 제외)."""
     out = []
-    for line in (Path(DATA_DIR) / "history.jsonl").read_text(encoding="utf-8").splitlines():
-        r = json.loads(line)
+    for r in current_records():
         if approved_by and r.get("approved_by") != approved_by:
             continue
         if threads and str(r.get("source", {}).get("thread_id")) not in threads:

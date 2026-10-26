@@ -28,7 +28,7 @@ import discord
 
 from config import ANTHROPIC_API_KEY, DATA_DIR, DISCORD_TOKEN, KST, MAX_MESSAGES
 from summarizer import SummaryError, ThreadMessage, summarize_thread
-from storage import messages_by_index
+from storage import resummary_context, thread_source
 from thread_reader import to_thread_messages
 
 LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)(?:/(\d+))?")
@@ -144,8 +144,13 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
                 if not msgs:
                     report.append({"id": t.id, "name": t.name, "skip": "사람이 쓴 메시지 없음"})
                     return
+                # 이미 정리한 스레드(--force)는 현재 기록과 비교해 바뀐 것만 남긴다 (Q-7, /정책정리와 같은 규칙)
+                ctx = resummary_context(str(t.id), msgs)
+                if ctx.nothing_new:
+                    report.append({"id": t.id, "name": t.name, "skip": "마지막 정리 이후 새 메시지 없음"})
+                    return
                 try:
-                    decisions = await summarize_thread(t.name, msgs)
+                    decisions = await summarize_thread(t.name, msgs, ctx.previous or None, ctx.since)
                 except SummaryError as e:
                     report.append({"id": t.id, "name": t.name, "skip": f"요약 실패: {e}"})
                     if e.raw:  # 왜 깨졌는지 볼 수 있게 원문 저장
@@ -153,20 +158,19 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
                         fail_dir.mkdir(parents=True, exist_ok=True)
                         (fail_dir / f"{t.id}.txt").write_text(e.raw, encoding="utf-8")
                     return
+                unchanged = [d for d in decisions if d["relation"] == "unchanged"]
+                decisions = [d for d in decisions if d["relation"] != "unchanged"]
                 for d in decisions:
                     d["include"] = True
                 results.append({
                     "thread_name": t.name,
                     "message_count": len(msgs),
-                    "source": {
-                        "thread_id": str(t.id),
-                        "thread_name": t.name,
-                        "thread_url": t.jump_url,
-                        "messages_by_index": messages_by_index(msgs),
-                    },
+                    "source": thread_source(str(t.id), t.name, t.jump_url, msgs),
                     "decisions": decisions,
+                    "unchanged": [{"prior_id": d["prior_id"], "topic": d["topic"]} for d in unchanged],
                 })
-                print(f"  ✓ {t.name[:40]} — 메시지 {len(msgs)}개 → 결정 {len(decisions)}건")
+                extra = f" (변동 없음 {len(unchanged)}건 제외)" if ctx.previous else ""
+                print(f"  ✓ {t.name[:40]} — 메시지 {len(msgs)}개 → 결정 {len(decisions)}건{extra}")
 
         await asyncio.gather(*(one(t) for t in todo))
     finally:
@@ -188,7 +192,10 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
             lines.append("- (결정 없음)")
         for d in r["decisions"]:
             n += 1
-            lines.append(f"- **[{n}] [{d['area']}] {d['status']} · {d['topic']}** — {d['decision']}")
+            rel = {"update": f"🔁 변경(기록 {d.get('prior_id')}) ", "reopen": f"↩️ 재논의(기록 {d.get('prior_id')}) "}
+            lines.append(f"- **[{n}] {rel.get(d.get('relation'), '')}[{d['area']}] {d['status']} · {d['topic']}** — {d['decision']}")
+        for u in r.get("unchanged") or []:
+            lines.append(f"- ➖ 변동 없음 (기록 {u['prior_id']}) · {u['topic']}")
         lines.append("")
     if report:
         lines += ["## 건너뜀", *[f"- {s.get('name', s['id'])}: {s['skip']}" for s in report]]
@@ -250,7 +257,7 @@ def main():
     ap.add_argument("links", nargs="?", help="스레드/채널 링크 파일")
     ap.add_argument("--commit", metavar="REVIEW_JSON", help="검토 파일을 저장")
     ap.add_argument("--approved-by", default="일괄정리", help="저장 시 승인자 이름")
-    ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 요약/저장")
+    ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 정리 (현재 기록과 비교해 바뀐 결정만 갱신)")
     ap.add_argument("--limit", type=int, help="앞에서부터 N개만 (시험용)")
     ap.add_argument("--no-reflect", action="store_true", help="저장만 하고 원천 정책서 반영 제안은 하지 않음")
     args = ap.parse_args()

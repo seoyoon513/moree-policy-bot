@@ -2,13 +2,17 @@
 
 - DB 속성 스키마는 PROPERTIES 한 곳에서 관리
 - setup_notion.py가 이 스키마로 DB를 생성
-- 승인 시 save_record()가 결정 1건 = 페이지 1개로 추가 (append-only, 덮어쓰지 않음)
+- 승인 시 save_record()가 결정 1건 = 페이지 1개로 추가
+- 같은 스레드 재정리에서 '변경'이면 update_record()가 같은 페이지를 덮어쓰고 이전 버전은 본문 '변경 이력'에 남긴다
 """
+import logging
 import re
 
 from notion_client import AsyncClient
 
 from config import AREAS, NOTION_DATA_SOURCE_ID, NOTION_TOKEN, STATUSES
+
+log = logging.getLogger("policy-bot")
 
 DB_TITLE = "정책 결정 히스토리"
 
@@ -110,10 +114,13 @@ def _excerpt_line(m: dict) -> str:
     return f"{m.get('author', '')} ({ts}): {m.get('text', '')}"
 
 
-def build_children(record: dict) -> list[dict]:
+def build_children(record: dict, reopens_url: str | None = None) -> list[dict]:
     """페이지 본문: 사람이 읽기 쉬운 형태 + 근거 메시지 원문 발췌(링크).
     발췌는 LLM이 아니라 원문을 잘라 넣은 것이라, 요약이 틀렸을 때 사람이 바로 대조할 수 있다."""
-    blocks = [_heading("결정"), _paragraph(record["decision"] or "-")]
+    blocks = []
+    if record.get("reopens"):  # 이전 최종결정을 덮지 않은 재논의 기록
+        blocks.append(_callout(f"재논의 중 — 이전 최종결정(기록 {record['reopens']})은 그대로 유효해요.", reopens_url))
+    blocks += [_heading("결정"), _paragraph(record["decision"] or "-")]
     if record.get("rationale"):
         blocks += [_heading("근거"), _paragraph(record["rationale"])]
     if record.get("open_questions"):
@@ -132,23 +139,84 @@ def build_children(record: dict) -> list[dict]:
     return blocks[:100]
 
 
+def _callout(text: str, url: str | None = None) -> dict:
+    rich = [{"type": "text", "text": {"content": text[:2000], "link": {"url": url} if url else None}}]
+    return {"object": "block", "type": "callout",
+            "callout": {"rich_text": rich, "icon": {"type": "emoji", "emoji": "↩️"}, "color": "yellow_background"}}
+
+
+def history_blocks(previous: list[dict]) -> list[dict]:
+    """'변경 이력' 섹션: 덮어쓴 이전 버전마다 접히는 블록 하나 (최신 버전이 위).
+    로컬 history.jsonl의 버전에서 매번 다시 만들기 때문에 몇 번 갱신해도 어긋나지 않는다."""
+    if not previous:
+        return []
+    blocks = [{"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rt("변경 이력")}}]
+    for r in reversed(previous):
+        title = (f"v{r.get('version', 1)} · {(r.get('approved_at') or '')[:10]} 정리 · {r.get('status', '')}"
+                 f" · 승인 {r.get('approved_by') or '-'}")
+        inner = [_paragraph(f"결정: {r.get('decision') or '-'}")]
+        if r.get("rationale"):
+            inner.append(_paragraph(f"근거: {r['rationale']}"))
+        if r.get("scope"):
+            inner.append(_paragraph(f"적용범위: {r['scope']}"))
+        inner += [_bullet(_excerpt_line(m), m.get("url")) for m in (r.get("source") or {}).get("messages") or []]
+        blocks.append({"object": "block", "type": "toggle",
+                       "toggle": {"rich_text": _rt(title), "children": inner[:100]}})
+    return blocks
+
+
 async def save_record(record: dict) -> str:
     """결정 1건을 Notion 페이지로 추가하고 페이지 URL을 돌려준다."""
+    reopens_url = await find_record_url(record["reopens"]) if record.get("reopens") else None
     page = await get_client().pages.create(
         parent={"type": "data_source_id", "data_source_id": NOTION_DATA_SOURCE_ID},
         properties=build_properties(record),
-        children=build_children(record),
+        children=build_children(record, reopens_url),
     )
     return page.get("url", "")
 
 
-async def find_record_url(record_id: str) -> str | None:
-    """기록ID로 결정 기록 페이지 URL을 찾는다 (저장된 기록을 나중에 정책서에 반영할 때 링크용)."""
+async def update_record(record: dict, previous: list[dict]) -> str:
+    """이전 기록을 덮어쓴다 (재정리에서 '변경'). 속성은 새 내용으로, 본문은 새로 쓰고 아래에 변경 이력.
+    previous: 이 기록의 이전 버전들 (오래된 순). 페이지를 못 찾으면 새로 만든다."""
+    page = await find_record_page(record["id"])
+    if not page:
+        log.warning("덮어쓸 노션 페이지가 없어 새로 만듦 (id=%s)", record["id"])
+        return await save_record(record)
+    client = get_client()
+    await client.pages.update(page_id=page["id"], properties=build_properties(record))
+    # 본문 다시 쓰기: 이 페이지는 봇이 만든 결정 기록이라 통째로 다시 쓴다 (정책서 원문이 아님)
+    old, cursor = [], None
+    while True:
+        kw = {"block_id": page["id"], "page_size": 100}
+        if cursor:
+            kw["start_cursor"] = cursor
+        res = await client.blocks.children.list(**kw)
+        old += res["results"]
+        if not res.get("has_more"):
+            break
+        cursor = res["next_cursor"]
+    for b in old:
+        await client.blocks.delete(block_id=b["id"])  # 휴지통으로 이동
+    blocks = build_children(record) + history_blocks(previous)
+    for i in range(0, len(blocks), 100):  # 요청당 최대 100블록
+        await client.blocks.children.append(block_id=page["id"], children=blocks[i:i + 100])
+    return page.get("url", "")
+
+
+async def find_record_page(record_id: str) -> dict | None:
+    """기록ID로 결정 기록 페이지를 찾는다."""
     res = await get_client().data_sources.query(
         data_source_id=NOTION_DATA_SOURCE_ID, page_size=1,
         filter={"property": "기록ID", "rich_text": {"equals": record_id}},
     )
-    return res["results"][0].get("url") if res.get("results") else None
+    return res["results"][0] if res.get("results") else None
+
+
+async def find_record_url(record_id: str) -> str | None:
+    """기록ID로 결정 기록 페이지 URL을 찾는다 (저장된 기록을 나중에 정책서에 반영할 때 링크용)."""
+    page = await find_record_page(record_id)
+    return page.get("url") if page else None
 
 
 async def create_database(parent_page_id: str) -> dict:

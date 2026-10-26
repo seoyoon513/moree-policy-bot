@@ -4,6 +4,7 @@
 - 결정 선택 → [수정]: 주제·상태·결정·근거·적용범위를 모달로 편집
 - [제외]: 그 결정만 저장에서 뺀다 (다시 누르면 포함)
 사람이 고친 필드는 record의 edited_fields에 남는다 → 요약 평가셋(Q-6) 만들 때 정답 라벨로 쓸 수 있다.
+- 재정리(Q-7): 변경은 "이전 → 이번"을 보여 주고, [🔗 연결 해제]로 덮어쓰지 않고 새 기록으로 저장할 수 있다
 """
 import logging
 
@@ -27,9 +28,41 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def relation_fields(d: dict, previous: dict[str, dict]) -> list[tuple[str, str]]:
+    """재정리 결정의 '이전 → 이번' 표시. 덮어쓸 내용을 승인 전에 보여 주는 게 잘못 덮어쓰기를 막는 장치다."""
+    old = previous.get(d.get("prior_id") or "")
+    if d.get("relation") == "update" and old:
+        return [(f"🔁 변경 — 이전 기록 {old['id']}을 덮어씀 (이전: {old['status']})",
+                 _cut(old["decision"] or "-", 1024))]
+    if d.get("relation") == "reopen" and old:
+        return [(f"↩️ 재논의 — 이전 최종결정(기록 {old['id']})은 그대로 두고 새 기록으로 저장",
+                 _cut(old["decision"] or "-", 1024))]
+    if d.get("unlinked_from"):
+        return [("🔗 연결 해제됨", f"기록 {d['unlinked_from'][1]}을 덮어쓰지 않고 새 기록으로 저장")]
+    return []
+
+
+def toggle_link(d: dict) -> None:
+    """[🔗 연결 해제]: 이전 기록을 덮어쓰지 않고 새 기록으로 저장. 다시 누르면 원래 연결로."""
+    if d.get("unlinked_from"):
+        d["relation"], d["prior_id"] = d.pop("unlinked_from")
+    elif d.get("relation") in ("update", "reopen"):
+        d["unlinked_from"] = [d["relation"], d["prior_id"]]
+        d["relation"], d["prior_id"] = "new", None
+
+
+def set_relation_by_status(d: dict, previous: dict[str, dict]) -> None:
+    """수정 모달에서 상태를 바꾸면 변경/재논의가 달라질 수 있다 (확정을 논의중으로 덮지 않는다)."""
+    old = previous.get(d.get("prior_id") or "")
+    if d.get("relation") in ("update", "reopen") and old:
+        d["relation"] = "reopen" if old["status"] == "최종결정" and d["status"] != "최종결정" else "update"
+
+
 def build_embeds(decisions: list[dict], messages: list[ThreadMessage],
-                 excluded: set[int] | frozenset = frozenset()) -> list[discord.Embed]:
+                 excluded: set[int] | frozenset = frozenset(),
+                 previous: dict[str, dict] | None = None) -> list[discord.Embed]:
     url_by_index = {m.index: m.jump_url for m in messages}
+    previous = previous or {}
     embeds = []
     for i, d in enumerate(decisions[:10], start=1):  # 디스코드: 메시지당 임베드 최대 10개
         if i - 1 in excluded:
@@ -39,11 +72,14 @@ def build_embeds(decisions: list[dict], messages: list[ThreadMessage],
             embeds.append(e)
             continue
         edited = " · ✏️ 수정됨" if d.get("edited_fields") else ""
+        mark = {"update": "🔁 ", "reopen": "↩️ "}.get(d.get("relation"), "")
         e = discord.Embed(
-            title=_cut(f"{STATUS_EMOJI[d['status']]} [{d['area']}] {d['topic']}", 256),
+            title=_cut(f"{mark}{STATUS_EMOJI[d['status']]} [{d['area']}] {d['topic']}", 256),
             description=_cut(d["decision"] or "(결정 내용 없음)", 2000),
             color=STATUS_COLOR[d["status"]],
         )
+        for name, value in relation_fields(d, previous):
+            e.add_field(name=_cut(name, 256), value=value, inline=False)
         e.add_field(name="상태", value=d["status"], inline=True)
         e.add_field(name="결정자", value=d["decided_by"] or "미확인", inline=True)
         e.add_field(name="적용 범위", value=_cut(d["scope"] or "미확인", 1024), inline=True)
@@ -112,17 +148,22 @@ class EditModal(discord.ui.Modal):
             topic=self.topic.value, status=self.status.values[0] if self.status.values else "",
             decision=self.decision.value, rationale=self.rationale.value, scope=self.scope.value,
         )
+        set_relation_by_status(view.decisions[self.index], view.previous)
         log.info("결정 %d 수정: %s", self.index + 1, changed or "변경 없음")
         await interaction.response.edit_message(**view.render())
 
 
 class ApprovalView(discord.ui.View):
-    def __init__(self, *, owner_id: int, decisions: list[dict], source: dict, messages: list[ThreadMessage]):
+    def __init__(self, *, owner_id: int, decisions: list[dict], source: dict, messages: list[ThreadMessage],
+                 previous: list[dict] | None = None, unchanged: int = 0):
+        """previous: 재정리일 때 이 스레드의 현재 기록. unchanged: 변동 없음이라 화면에서 뺀 결정 수."""
         super().__init__(timeout=APPROVAL_TIMEOUT)
         self.owner_id = owner_id
         self.decisions = decisions
         self.source = source
         self.messages = messages
+        self.previous = {r["id"]: r for r in previous or []}
+        self.unchanged = unchanged
         self.excluded: set[int] = set()
         self.selected = 0
         self.message: discord.Message | None = None
@@ -131,9 +172,12 @@ class ApprovalView(discord.ui.View):
     # --- 화면 ---
     def render(self) -> dict:
         """메시지 수정에 넘길 content·embeds·view."""
-        embeds = build_embeds(self.decisions, self.messages, self.excluded)
+        embeds = build_embeds(self.decisions, self.messages, self.excluded, self.previous)
         kept = len(self.decisions) - len(self.excluded)
         parts = [f"📋 메시지 {len(self.messages)}개에서 결정 {len(self.decisions)}건을 정리했어요"]
+        if self.previous:
+            updates = sum(1 for d in self.decisions if d.get("relation") == "update")
+            parts.append(f" (재정리: 변경 {updates}건 · 변동 없음 {self.unchanged}건은 저장 안 함)")
         if self.excluded:
             parts.append(f" (제외 {len(self.excluded)}건 → {kept}건 저장)")
         if len(embeds) < len(self.decisions):
@@ -155,6 +199,11 @@ class ApprovalView(discord.ui.View):
         excluded = self.selected in self.excluded
         self.toggle_exclude.label = "↩️ 다시 포함" if excluded else "🚫 제외"
         self.edit.disabled = excluded
+        d = self.decisions[self.selected] if self.decisions else {}
+        self.toggle_link.label = "🔗 다시 연결" if d.get("unlinked_from") else "🔗 연결 해제"
+        self.toggle_link.disabled = excluded or not (d.get("relation") in ("update", "reopen") or d.get("unlinked_from"))
+        if not self.previous:  # 처음 정리하는 스레드에는 연결이 없다
+            self.remove_item(self.toggle_link)
 
     def kept_decisions(self) -> list[dict]:
         return [d for i, d in enumerate(self.decisions) if i not in self.excluded]
@@ -184,6 +233,12 @@ class ApprovalView(discord.ui.View):
         self.excluded ^= {self.selected}
         await interaction.response.edit_message(**self.render())
 
+    @discord.ui.button(label="🔗 연결 해제", style=discord.ButtonStyle.secondary, row=1)
+    async def toggle_link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        toggle_link(self.decisions[self.selected])
+        set_relation_by_status(self.decisions[self.selected], self.previous)
+        await interaction.response.edit_message(**self.render())
+
     @discord.ui.button(label="승인하고 저장", style=discord.ButtonStyle.success, row=2)
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         to_save = self.kept_decisions()
@@ -208,10 +263,11 @@ class ApprovalView(discord.ui.View):
             summary += f" (수정 {edited}건 · 제외 {len(self.excluded)}건)"
         lines = [f"✅ {interaction.user.mention} 님이 승인 — {summary}"]
         for r in results:
+            tag = f"🔁 변경 v{r.record['version']} · " if r.updated else ("↩️ 재논의 · " if r.record.get("reopens") else "")
             if r.notion_url:
-                lines.append(f"• [{r.record['topic']}]({r.notion_url})")
+                lines.append(f"• {tag}[{r.record['topic']}]({r.notion_url})")
             elif r.notion_error:
-                lines.append(f"• {r.record['topic']} — ⚠️ Notion 저장 실패 (로컬에는 저장됨)")
+                lines.append(f"• {tag}{r.record['topic']} — ⚠️ Notion 저장 실패 (로컬에는 저장됨)")
         if not any(r.notion_url or r.notion_error for r in results):
             lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
         await interaction.edit_original_response(content="\n".join(lines)[:2000])

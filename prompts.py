@@ -54,7 +54,22 @@ SYSTEM_PROMPT = f"""너는 앱 서비스 팀의 정책 결정 기록 담당자�
 """
 
 
-def build_user_prompt(thread_name: str, transcript: str) -> str:
+def build_user_prompt(thread_name: str, transcript: str, previous: str | None = None) -> str:
+    prev = "" if not previous else f"""
+이 스레드는 전에 정리된 적이 있다. 아래는 지금 저장돼 있는 기록이다 (사람이 승인·수정한 내용이라 기준으로 삼는다).
+대화에서 [새 메시지] 표시가 붙은 줄은 그 정리 이후에 올라온 메시지다.
+
+<previous_records>
+{previous}
+</previous_records>
+
+## 이전 기록과의 관계 — 결정마다 relation과 prior_id를 추가한다
+- "unchanged": 이전 기록과 결정 내용·상태가 같다 (표현만 다른 것도 같다). prior_id 필수.
+- "update": 같은 주제인데 결정 내용이나 상태가 바뀌었다. prior_id 필수. decision에는 바뀐 부분만이 아니라 **이전 내용과 합친 현재 전체 정책**을 쓴다.
+- "new": 이전 기록에 없는 주제다. prior_id는 null.
+- 같은 주제인지 애매하면 "new"로 둔다. 잘못 연결하면 유효한 이전 기록이 덮어써진다.
+- 이전 기록 중 이번 대화에서 다시 다룰 게 없는 것도 "unchanged"로 하나씩 출력한다.
+"""
     return f"""스레드 제목: {thread_name}
 
 아래는 스레드 대화다. 각 줄은 [#번호] [시각] 작성자: 내용 형식이고, 다른 참여자가 동의 리액션(👍 ✅ 등)을 남긴 메시지는 끝에 [동의 리액션: 이름]이 붙는다.
@@ -62,8 +77,17 @@ def build_user_prompt(thread_name: str, transcript: str) -> str:
 <thread>
 {transcript}
 </thread>
-
+{prev}
 위 규칙대로 JSON만 출력해라."""
+
+
+def format_previous(records: list[dict]) -> str:
+    """재정리 프롬프트에 넣을 이전 기록 목록."""
+    return "\n\n".join(
+        f"[기록 {r['id']}] [{r['area']}] {r['status']} · {r['topic']}\n결정: {r['decision']}"
+        + (f"\n적용범위: {r['scope']}" if r.get("scope") else "")
+        for r in records
+    )
 
 
 # --- 원천 정책서 반영 제안 (spec_reflect.py) ---

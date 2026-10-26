@@ -8,7 +8,7 @@ import discord
 from discord import app_commands
 
 from config import ANTHROPIC_API_KEY, DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
-from storage import messages_by_index
+from storage import resummary_context, thread_source
 from summarizer import SummaryError, ThreadMessage, summarize_thread
 from policy_search import register_policy_commands
 from thread_reader import to_thread_messages
@@ -78,24 +78,29 @@ async def summarize_command(interaction: discord.Interaction):
         await interaction.followup.send("정리할 메시지가 없어요.")
         return
 
+    # 재정리: 이 스레드의 현재 기록과 비교해 바뀐 것만 저장한다 (Q-7)
+    ctx = resummary_context(str(thread.id), messages)
+    if ctx.nothing_new:
+        await interaction.followup.send(f"마지막 정리 이후 새 메시지가 없어요. 기존 기록 {len(ctx.previous)}건을 그대로 둘게요.")
+        return
+
     try:
-        decisions = await summarize_thread(thread.name, messages)
+        decisions = await summarize_thread(thread.name, messages, ctx.previous or None, ctx.since)
     except SummaryError as e:
         log.warning("요약 실패: %s", e)
         await interaction.followup.send(f"요약에 실패했어요: {e}")
         return
 
-    if not decisions:
-        await interaction.followup.send("이 스레드에서 정책 결정이나 논의를 찾지 못했어요.")
+    changed = [d for d in decisions if d["relation"] != "unchanged"]
+    if not changed:
+        msg = (f"이전 정리와 달라진 결정이 없어요 (변동 없음 {len(decisions)}건). 기존 기록을 그대로 둘게요."
+               if decisions else "이 스레드에서 정책 결정이나 논의를 찾지 못했어요.")
+        await interaction.followup.send(msg)
         return
 
-    source = {
-        "thread_id": str(thread.id),
-        "thread_name": thread.name,
-        "thread_url": thread.jump_url,
-        "messages_by_index": messages_by_index(messages),
-    }
-    view = ApprovalView(owner_id=interaction.user.id, decisions=decisions, source=source, messages=messages)
+    source = thread_source(str(thread.id), thread.name, thread.jump_url, messages)
+    view = ApprovalView(owner_id=interaction.user.id, decisions=changed, source=source, messages=messages,
+                        previous=ctx.previous, unchanged=len(decisions) - len(changed))
     view.message = await interaction.followup.send(**view.render(), wait=True)
 
 
