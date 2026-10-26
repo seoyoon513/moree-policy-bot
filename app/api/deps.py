@@ -31,8 +31,8 @@ def get_retriever(
     if s.rerank_enabled and s.anthropic_api_key:
         return Retriever(embedder, store, min_score=s.rerank_min_score,
                          reranker=get_reranker(s.anthropic_api_key, s.rerank_model, s.rerank_min_relevance),
-                         rerank_candidates=s.rerank_candidates)
-    return Retriever(embedder, store, min_score=s.rag_min_score)
+                         rerank_candidates=s.rerank_candidates, hybrid=s.hybrid_enabled)
+    return Retriever(embedder, store, min_score=s.rag_min_score, hybrid=s.hybrid_enabled)
 
 
 @lru_cache

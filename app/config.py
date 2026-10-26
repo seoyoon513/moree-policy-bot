@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # 이 점수(cosine 유사도) 미만인 결과는 버린다. 결과가 너무 적으면 낮추고, 엉뚱하면 높이기
     rag_min_score: float = 0.3
 
+    # --- 하이브리드 검색: 벡터 + BM25 키워드, RRF 결합 (기본 꺼짐: 평가로 효과를 확인한 뒤 켠다, 4-2) ---
+    hybrid_enabled: bool = False
+
     # --- 리랭킹 (기본 꺼짐: 평가로 효과를 확인한 뒤 켠다) ---
     rerank_enabled: bool = False
     rerank_model: str = "claude-haiku-5-5"

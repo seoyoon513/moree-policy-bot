@@ -6,9 +6,11 @@ from app.rag.store import VectorStore
 
 class Retriever:
     def __init__(self, embedder: Embedder, store: VectorStore, min_score: float = 0.0,
-                 reranker=None, rerank_candidates: int = 15):
+                 reranker=None, rerank_candidates: int = 15, hybrid: bool = False):
         self.embedder = embedder
         self.store = store
+        # 하이브리드: 벡터 순위 + BM25 키워드 순위를 RRF로 합친다 (keyword.py). 거절은 그대로 코사인 하한선·리랭커가 한다
+        self.hybrid = hybrid
         # 리랭커가 있으면 벡터 검색으로 후보를 넉넉히 뽑고(rerank_candidates), 최종 순위·거절은 리랭커가 정한다
         self.reranker = reranker
         self.rerank_candidates = rerank_candidates
@@ -17,11 +19,12 @@ class Retriever:
 
     def search(self, query: str, k: int = 5, area: str | None = None, status: str | None = None,
                one_per_page: bool = True) -> list[SearchHit]:
+        first_stage = self._hybrid_search if self.hybrid else self._vector_search
         if self.reranker:
-            candidates = self._vector_search(query, self.rerank_candidates, area, status, one_per_page)
+            candidates = first_stage(query, self.rerank_candidates, area, status, one_per_page)
             hits = self.reranker.rerank(query, candidates, k)
         else:
-            hits = self._vector_search(query, k, area, status, one_per_page)
+            hits = first_stage(query, k, area, status, one_per_page)
         return self.with_reopen_pairs(hits)
 
     def with_reopen_pairs(self, hits: list[SearchHit]) -> list[SearchHit]:
@@ -45,10 +48,44 @@ class Retriever:
                     out.append(pair)
         return out
 
+    @staticmethod
+    def _where(area: str | None, status: str | None) -> dict | None:
+        filters = [{key: val} for key, val in (("area", area), ("status", status)) if val]
+        return filters[0] if len(filters) == 1 else ({"$and": filters} if filters else None)
+
+    @staticmethod
+    def _dedupe_pages(hits: list[SearchHit], k: int) -> list[SearchHit]:
+        """순서를 지키며 페이지당 첫 청크만."""
+        seen, out = set(), []
+        for h in hits:
+            if h.page_id not in seen:
+                seen.add(h.page_id)
+                out.append(h)
+        return out[:k]
+
+    def _hybrid_search(self, query: str, k: int, area: str | None, status: str | None,
+                       one_per_page: bool) -> list[SearchHit]:
+        vector = self.embedder.embed_query(query)
+        n = max(k * 3, 30)  # 두 검색 모두 넉넉히 뽑아 합친 뒤 자른다
+        vec_hits = self.store.query(vector, k=n, where=self._where(area, status))
+        bm25, chunks = self.store.keyword_index()
+        allowed = None
+        if area or status:
+            allowed = {cid for cid, (_, m) in chunks.items()
+                       if (not area or m.get("area") == area) and (not status or m.get("status") == status)}
+        kw_hits = bm25.search(query, n, allowed)
+
+        from app.rag.keyword import rrf
+        order = rrf([[h.metadata["chunk_id"] for h in vec_hits], [cid for cid, _ in kw_hits]])
+        by_id = {h.metadata["chunk_id"]: h for h in vec_hits}
+        for h in self.store.get_by_ids([cid for cid in order if cid not in by_id], vector):
+            by_id[h.metadata["chunk_id"]] = h  # 키워드로만 찾은 청크도 코사인 점수를 붙여 하한선을 똑같이 적용
+        ranked = [by_id[cid] for cid in order if cid in by_id and by_id[cid].score >= self.min_score]
+        return self._dedupe_pages(ranked, k) if one_per_page else ranked[:k]
+
     def _vector_search(self, query: str, k: int, area: str | None, status: str | None,
                        one_per_page: bool) -> list[SearchHit]:
-        filters = [{key: val} for key, val in (("area", area), ("status", status)) if val]
-        where = filters[0] if len(filters) == 1 else ({"$and": filters} if filters else None)
+        where = self._where(area, status)
 
         # 페이지당 1개로 줄일 거라 넉넉히 가져온다
         raw = self.store.query(self.embedder.embed_query(query), k=k * 3 if one_per_page else k, where=where)

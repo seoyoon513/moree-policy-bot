@@ -64,6 +64,7 @@ def main():
     ap.add_argument("--answers", action="store_true")
     ap.add_argument("--judge", action="store_true")
     ap.add_argument("--rerank", action="store_true", help="LLM 리랭커를 켜고 평가 (RERANK_* 설정 사용)")
+    ap.add_argument("--hybrid", action="store_true", help="벡터 + BM25 키워드 하이브리드 검색으로 평가 (4-2)")
     args = ap.parse_args()
 
     s = get_settings()
@@ -80,12 +81,12 @@ def main():
         # 아래 공통 하한선 적용은 끈다
         retriever = Retriever(build_embedder(s), store, min_score=s.rerank_min_score,
                               reranker=LLMReranker(s.anthropic_api_key, s.rerank_model, s.rerank_min_relevance),
-                              rerank_candidates=s.rerank_candidates)
+                              rerank_candidates=s.rerank_candidates, hybrid=args.hybrid)
         min_score = 0.0
         args.sweep = False
     else:
         # 하한선은 아래에서 직접 적용 (sweep 때 임베딩을 한 번만 하려고)
-        retriever = Retriever(build_embedder(s), store, min_score=0.0)
+        retriever = Retriever(build_embedder(s), store, min_score=0.0, hybrid=args.hybrid)
     started = datetime.now(timezone.utc)
 
     raw = {it.id: retriever.search(it.question, k=args.k, area=it.area) for it in items}
@@ -106,6 +107,7 @@ def main():
         if rr.last_raw:
             print(f"  마지막 실패 응답: {rr.last_raw[:300]!r}")
     report = {"run_at": started.isoformat(), "k": args.k, "min_score": min_score, "rerank": args.rerank,
+              "hybrid": args.hybrid,
               "rerank_fallbacks": rr.fallbacks if rr else None,
               "rerank_last_failed_raw": rr.last_raw if rr else None,
               "rerank_model": s.rerank_model if args.rerank else None,
@@ -114,6 +116,7 @@ def main():
               "items": rows}
 
     mode = f"리랭킹 {s.rerank_model}, 후보 {s.rerank_candidates}" if args.rerank else f"min_score={min_score}"
+    mode += ", 하이브리드" if args.hybrid else ""
     print(f"\n=== 검색 평가 (k={args.k}, {mode}, {len(items)}문항) ===")
     for r in rows:
         mark = ("✅" if r["rejected"] else "❌") if r["negative"] else ("✅" if r["hit"] else "❌")
