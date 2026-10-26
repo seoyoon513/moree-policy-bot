@@ -57,7 +57,8 @@ def page_to_document(page: dict, s: Settings) -> PolicyDocument:
             "area": p(s.notion_prop_area),
             "status": p(s.notion_prop_status),
             "decider": p(s.notion_prop_decider),
-            "decided_at": p(s.notion_prop_decided_at)[:10],
+            # '결정일'이 생기기 전 페이지는 비어 있으니 옛 '승인일'로 대신한다
+            "decided_at": (p(s.notion_prop_decided_at) or p("승인일"))[:10],
             "scope": p(s.notion_prop_scope),
             "thread_url": p("스레드"),
             "last_edited": page.get("last_edited_time", ""),
@@ -103,6 +104,7 @@ def record_to_document(r: dict) -> PolicyDocument:
         ("스레드명", src.get("thread_name", "")),
     ])
     approved_at = r.get("approved_at", "")
+    decided_at = r.get("decided_at") or approved_at  # decided_at이 생기기 전 기록은 승인일로
     return PolicyDocument(
         page_id=f"local-{r['id']}",
         title=r.get("topic") or "(제목 없음)",
@@ -112,7 +114,7 @@ def record_to_document(r: dict) -> PolicyDocument:
             "area": r.get("area", ""),
             "status": r.get("status", ""),
             "decider": r.get("decided_by") or "",
-            "decided_at": approved_at[:10],
+            "decided_at": decided_at[:10],
             "scope": r.get("scope") or "",
             "thread_url": src.get("thread_url", ""),
             "last_edited": approved_at,  # append-only라 승인 시각이 곧 버전

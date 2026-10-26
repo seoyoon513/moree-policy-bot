@@ -1,7 +1,7 @@
 """스레드 메시지 → Claude 요약 → 정규화된 결정 목록."""
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from anthropic import AsyncAnthropic
@@ -25,10 +25,14 @@ class ThreadMessage:
     created_at: datetime
     content: str
     jump_url: str
+    agreed_by: list[str] = field(default_factory=list)  # 동의 리액션을 남긴 사람 (작성자 제외)
 
     def to_line(self) -> str:
         ts = self.created_at.astimezone(KST).strftime("%m-%d %H:%M")
-        return f"[#{self.index}] [{ts}] {self.author}: {self.content}"
+        line = f"[#{self.index}] [{ts}] {self.author}: {self.content}"
+        if self.agreed_by:
+            line += f" [동의 리액션: {', '.join(self.agreed_by)}]"
+        return line
 
 
 _client: AsyncAnthropic | None = None
@@ -82,6 +86,19 @@ def _str_or_none(v) -> str | None:
     return s or None
 
 
+_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
+
+def extract_urls(refs: list) -> list[str]:
+    """외부참조는 URL만 남긴다. "피그마: https://..."처럼 설명이 붙어 와도 URL만 뽑고, URL 없는 항목은 버린다."""
+    urls: list[str] = []
+    for r in refs:
+        for u in _URL_RE.findall(str(r)):
+            if u not in urls:
+                urls.append(u)
+    return urls
+
+
 def normalize(data: dict, max_index: int) -> list[dict]:
     """필드 누락/잘못된 값을 보정해서 저장·표시 코드가 안전하게 쓰게 한다."""
     out = []
@@ -121,7 +138,7 @@ def normalize(data: dict, max_index: int) -> list[dict]:
                 "rationale": _str_or_none(d.get("rationale")),
                 "decided_by": _str_or_none(d.get("decided_by")),
                 "scope": _str_or_none(d.get("scope")),
-                "external_refs": [str(r).strip() for r in d.get("external_refs") or [] if str(r).strip()],
+                "external_refs": extract_urls(d.get("external_refs") or []),
                 "open_questions": questions,
                 "source_messages": sources,
             }

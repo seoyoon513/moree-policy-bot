@@ -175,7 +175,7 @@ python -m scripts.eval_rag --rerank --answers   # 리랭킹 켠 상태로 같은
 python -m scripts.batch_summarize data/links.txt          # 요약 → data/batch/review-*.json (저장 안 함)
 python -m scripts.batch_summarize --commit data/batch/review-*.json --approved-by 이름   # 검토 후 저장
 ```
-승인일은 스레드 마지막 메시지 시각으로 저장된다 (과거 결정이 '오늘'로 기록되면 시간순이 깨지므로).
+날짜는 두 가지로 저장된다. **결정일**은 결정마다 근거 메시지 중 가장 늦은 메시지 시각이고, 검색·답변의 시간순 정렬 기준이다. **정리일**은 승인한 시각이다. 정리가 늦어져도 과거 결정이 '오늘'로 기록되지 않도록 둘을 나눴다.
 
 ## Docker 실행 (Mac 홈서버 / 클라우드 공통)
 ```bash

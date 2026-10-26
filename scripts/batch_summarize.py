@@ -28,16 +28,11 @@ import discord
 
 from config import ANTHROPIC_API_KEY, DATA_DIR, DISCORD_TOKEN, KST, MAX_MESSAGES
 from summarizer import SummaryError, ThreadMessage, summarize_thread
+from storage import messages_by_index
+from thread_reader import to_thread_messages
 
 LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)(?:/(\d+))?")
 CONCURRENCY = 3  # 동시에 요약할 스레드 수 (Claude 레이트리밋 고려)
-
-
-def _format_content(m: discord.Message) -> str:  # bot.py와 동일 규칙
-    parts = [m.content.strip()] if m.content.strip() else []
-    parts += [f"[첨부: {a.filename}]" for a in m.attachments]
-    parts += [f"[링크: {e.title or e.url}]" for e in m.embeds if e.title or e.url]
-    return " ".join(parts).replace("\n", " / ")
 
 
 def parse_links(path: str) -> list[tuple[int, int]]:
@@ -98,15 +93,7 @@ async def collect(client: discord.Client, thread: discord.Thread) -> list[Thread
     async for m in thread.history(limit=MAX_MESSAGES, oldest_first=True):
         if m.id not in starter_ids:
             raw.append(m)
-
-    result = []
-    for m in raw:
-        if m.author.bot:
-            continue
-        content = _format_content(m)
-        if content:
-            result.append(ThreadMessage(len(result) + 1, m.author.display_name, m.created_at, content, m.jump_url))
-    return result
+    return await to_thread_messages(raw)
 
 
 async def read_and_summarize(links_path: str, force: bool, limit: int | None) -> None:
@@ -171,13 +158,11 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
                 results.append({
                     "thread_name": t.name,
                     "message_count": len(msgs),
-                    # 저장 시 승인일로 쓴다. 오늘 날짜로 넣으면 과거 결정이 전부 '최신'이 되어 시간순이 깨짐
-                    "last_message_at": msgs[-1].created_at.isoformat(),
                     "source": {
                         "thread_id": str(t.id),
                         "thread_name": t.name,
                         "thread_url": t.jump_url,
-                        "message_urls_by_index": {m.index: m.jump_url for m in msgs},
+                        "messages_by_index": messages_by_index(msgs),
                     },
                     "decisions": decisions,
                 })
@@ -204,7 +189,6 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
         for d in r["decisions"]:
             n += 1
             lines.append(f"- **[{n}] [{d['area']}] {d['status']} · {d['topic']}** — {d['decision']}")
-        lines.append(f"  - 승인일로 저장될 날짜: {r['last_message_at'][:10]}")
         lines.append("")
     if report:
         lines += ["## 건너뜀", *[f"- {s.get('name', s['id'])}: {s['skip']}" for s in report]]
@@ -216,11 +200,11 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
     print(f"  python -m scripts.batch_summarize --commit {review}")
 
 
-async def commit(review_path: str, approved_by: str) -> None:
+async def commit(review_path: str, approved_by: str, force: bool = False) -> None:
     from storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
 
     data = json.loads(Path(review_path).read_text(encoding="utf-8"))
-    saved = already_saved_thread_ids()
+    saved = set() if force else already_saved_thread_ids()
     total = notion_fail = 0
     for r in data["threads"]:
         if r["source"]["thread_id"] in saved:
@@ -230,23 +214,18 @@ async def commit(review_path: str, approved_by: str) -> None:
         if not decisions:
             continue
         source = dict(r["source"])
+        if "messages_by_index" not in source:
+            print(f"  - {r['thread_name']}: 예전 형식의 검토 파일이라 결정일을 계산할 수 없음, 다시 요약해 주세요")
+            continue
         # JSON을 거치면 dict 키가 문자열이 되므로 메시지 번호(int)로 되돌린다
-        source["message_urls_by_index"] = {int(k): v for k, v in source["message_urls_by_index"].items()}
-        decided = (datetime.fromisoformat(r["last_message_at"]) if r.get("last_message_at")
-                   else snowflake_time(source["message_urls_by_index"]))
-        results = await save_decisions(decisions, source=source, approved_by=approved_by, approved_at=decided)
+        source["messages_by_index"] = {int(k): v for k, v in source["messages_by_index"].items()}
+        # 결정일은 결정마다 근거 메시지 시각으로 계산된다 (storage.py). 승인 시각(정리일)은 지금
+        results = await save_decisions(decisions, source=source, approved_by=approved_by)
         total += len(results)
         notion_fail += sum(1 for x in results if x.notion_error)
         print(f"  ✓ {r['thread_name'][:40]} — {len(results)}건 저장")
     print(f"\n저장 {total}건 (Notion 실패 {notion_fail}건)")
     trigger_reindex()
-
-
-def snowflake_time(urls_by_index: dict) -> datetime | None:
-    """Discord ID(snowflake)에는 생성 시각이 들어 있다: (id >> 22) + 2015-01-01 기준 ms.
-    날짜 정보 없이 만든 검토 파일도 마지막 메시지 링크의 ID로 결정 시점을 복원한다."""
-    ids = [int(u.rstrip("/").rsplit("/", 1)[-1]) for u in urls_by_index.values() if u]
-    return discord.utils.snowflake_time(max(ids)) if ids else None
 
 
 def trigger_reindex() -> None:
@@ -266,12 +245,12 @@ def main():
     ap.add_argument("links", nargs="?", help="스레드/채널 링크 파일")
     ap.add_argument("--commit", metavar="REVIEW_JSON", help="검토 파일을 저장")
     ap.add_argument("--approved-by", default="일괄정리", help="저장 시 승인자 이름")
-    ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 요약")
+    ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 요약/저장")
     ap.add_argument("--limit", type=int, help="앞에서부터 N개만 (시험용)")
     args = ap.parse_args()
 
     if args.commit:
-        asyncio.run(commit(args.commit, args.approved_by))
+        asyncio.run(commit(args.commit, args.approved_by, args.force))
     elif args.links:
         if not DISCORD_TOKEN or not ANTHROPIC_API_KEY:
             raise SystemExit(".env에 DISCORD_TOKEN, ANTHROPIC_API_KEY가 필요해요.")

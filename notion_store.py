@@ -28,7 +28,8 @@ PROPERTIES = {
     "스레드": {"url": {}},
     "스레드명": {"rich_text": {}},
     "승인자": {"rich_text": {}},
-    "승인일": {"date": {}},
+    "결정일": {"date": {}},  # 근거 메시지 중 가장 늦은 시각. 시간순 정렬 기준
+    "정리일": {"date": {}},  # 승인 버튼을 누른 시각
     "기록ID": {"rich_text": {}},
 }
 
@@ -85,7 +86,8 @@ def build_properties(record: dict) -> dict:
         "스레드": {"url": src.get("thread_url") or None},
         "스레드명": {"rich_text": _rt(src.get("thread_name"))},
         "승인자": {"rich_text": _rt(record.get("approved_by"))},
-        "승인일": {"date": {"start": record["approved_at"]}},
+        "결정일": {"date": {"start": record.get("decided_at") or record["approved_at"]}},
+        "정리일": {"date": {"start": record["approved_at"]}},
         "기록ID": {"rich_text": _rt(record["id"])},
     }
 
@@ -103,8 +105,14 @@ def _bullet(text: str, url: str | None = None) -> dict:
     return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": rich}}
 
 
+def _excerpt_line(m: dict) -> str:
+    ts = m["at"][5:16].replace("T", " ") if m.get("at") else ""
+    return f"{m.get('author', '')} ({ts}): {m.get('text', '')}"
+
+
 def build_children(record: dict) -> list[dict]:
-    """페이지 본문: 사람이 읽기 쉬운 형태 + 근거 메시지 링크."""
+    """페이지 본문: 사람이 읽기 쉬운 형태 + 근거 메시지 원문 발췌(링크).
+    발췌는 LLM이 아니라 원문을 잘라 넣은 것이라, 요약이 틀렸을 때 사람이 바로 대조할 수 있다."""
     blocks = [_heading("결정"), _paragraph(record["decision"] or "-")]
     if record.get("rationale"):
         blocks += [_heading("근거"), _paragraph(record["rationale"])]
@@ -113,8 +121,12 @@ def build_children(record: dict) -> list[dict]:
         blocks += [
             _bullet(q["question"] + (f" → {q['ask_to']}" if q.get("ask_to") else "")) for q in record["open_questions"]
         ]
+    messages = record["source"].get("messages") or []
     urls = record["source"].get("message_urls") or []
-    if urls:
+    if messages:
+        blocks.append(_heading("근거 메시지"))
+        blocks += [_bullet(_excerpt_line(m), m.get("url")) for m in messages]
+    elif urls:  # 발췌를 저장하기 전 기록
         blocks.append(_heading("근거 메시지"))
         blocks += [_bullet(f"디스코드 메시지 {i}", u) for i, u in enumerate(urls, start=1)]
     return blocks[:100]

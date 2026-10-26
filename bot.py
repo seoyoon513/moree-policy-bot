@@ -8,9 +8,11 @@ import discord
 from discord import app_commands
 
 from config import ANTHROPIC_API_KEY, DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
+from storage import messages_by_index
 from summarizer import SummaryError, ThreadMessage, summarize_thread
 from policy_search import register_policy_commands
-from views import ApprovalView, build_embeds
+from thread_reader import to_thread_messages
+from views import ApprovalView
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("policy-bot")
@@ -42,13 +44,6 @@ bot = PolicyBot()
 register_policy_commands(bot.tree)  # /정책검색, /정책질문 (FastAPI 서버 필요)
 
 
-def _format_content(m: discord.Message) -> str:
-    parts = [m.content.strip()] if m.content.strip() else []
-    parts += [f"[첨부: {a.filename}]" for a in m.attachments]
-    parts += [f"[링크: {e.title or e.url}]" for e in m.embeds if e.title or e.url]
-    return " ".join(parts).replace("\n", " / ")
-
-
 async def collect_thread_messages(thread: discord.Thread) -> list[ThreadMessage]:
     raw: list[discord.Message] = []
 
@@ -66,24 +61,7 @@ async def collect_thread_messages(thread: discord.Thread) -> list[ThreadMessage]
         if starter and m.id == starter.id:
             continue
         raw.append(m)
-
-    result = []
-    for m in raw:
-        if m.author.bot:
-            continue
-        content = _format_content(m)
-        if not content:
-            continue
-        result.append(
-            ThreadMessage(
-                index=len(result) + 1,
-                author=m.author.display_name,
-                created_at=m.created_at,
-                content=content,
-                jump_url=m.jump_url,
-            )
-        )
-    return result
+    return await to_thread_messages(raw)
 
 
 @bot.tree.command(name="정책정리", description="이 스레드의 논의를 정책 결정으로 정리해요")
@@ -115,19 +93,10 @@ async def summarize_command(interaction: discord.Interaction):
         "thread_id": str(thread.id),
         "thread_name": thread.name,
         "thread_url": thread.jump_url,
-        "message_urls_by_index": {m.index: m.jump_url for m in messages},
+        "messages_by_index": messages_by_index(messages),
     }
-    embeds = build_embeds(decisions, messages)
-    shown = len(embeds)
-    note = f" (화면에는 {shown}건만 표시, 승인 시 {len(decisions)}건 모두 저장)" if shown < len(decisions) else ""
-
-    view = ApprovalView(owner_id=interaction.user.id, decisions=decisions, source=source)
-    view.message = await interaction.followup.send(
-        content=f"📋 메시지 {len(messages)}개에서 결정 {len(decisions)}건을 정리했어요{note}. 확인 후 승인해 주세요.",
-        embeds=embeds,
-        view=view,
-        wait=True,
-    )
+    view = ApprovalView(owner_id=interaction.user.id, decisions=decisions, source=source, messages=messages)
+    view.message = await interaction.followup.send(**view.render(), wait=True)
 
 
 @bot.tree.error

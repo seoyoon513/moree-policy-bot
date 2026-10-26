@@ -32,7 +32,7 @@ NOTION_PAGE = {
         "근거": {"type": "rich_text", "rich_text": []},
         "결정자": {"type": "rich_text", "rich_text": _rt("PM")},
         "적용범위": {"type": "rich_text", "rich_text": _rt("행사 상세 > 리뷰 탭")},
-        "승인일": {"type": "date", "date": {"start": "2026-10-11T09:00:00+09:00"}},
+        "결정일": {"type": "date", "date": {"start": "2026-10-11T09:00:00+09:00"}},
         "스레드": {"type": "url", "url": "https://discord.com/channels/1/3"},
     },
 }
@@ -45,6 +45,12 @@ def test_notion_page_to_document_uses_bot_schema():
     assert d.metadata["decided_at"] == "2026-10-11"
     assert "결정: 발도장 인증한 사용자만 작성" in d.body
     assert "근거:" not in d.body  # 빈 속성은 생략
+
+
+def test_notion_page_without_decided_at_uses_old_approved_date():
+    page = {**NOTION_PAGE, "properties": {k: v for k, v in NOTION_PAGE["properties"].items() if k != "결정일"}}
+    page["properties"]["승인일"] = {"type": "date", "date": {"start": "2026-09-01T09:00:00+09:00"}}
+    assert page_to_document(page, Settings()).metadata["decided_at"] == "2026-09-01"
 
 
 def test_jsonl_loader_reads_bot_history(tmp_path):

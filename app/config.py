@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     notion_prop_area: str = "기능영역"
     notion_prop_status: str = "상태"
     notion_prop_decider: str = "결정자"
-    notion_prop_decided_at: str = "승인일"
+    notion_prop_decided_at: str = "결정일"
     notion_prop_scope: str = "적용범위"
     # 본문으로 쓸 속성들 (순서대로 "라벨: 값" 형태로 이어붙임)
     notion_body_props: list[str] = ["결정", "근거", "적용범위", "외부참조", "확인필요", "스레드명"]
