@@ -200,8 +200,9 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
     print(f"  python -m scripts.batch_summarize --commit {review}")
 
 
-async def commit(review_path: str, approved_by: str, force: bool = False) -> None:
+async def commit(review_path: str, approved_by: str, force: bool = False, reflect: bool = True) -> None:
     from storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
+    import spec_reflect
 
     data = json.loads(Path(review_path).read_text(encoding="utf-8"))
     saved = set() if force else already_saved_thread_ids()
@@ -224,6 +225,10 @@ async def commit(review_path: str, approved_by: str, force: bool = False) -> Non
         total += len(results)
         notion_fail += sum(1 for x in results if x.notion_error)
         print(f"  ✓ {r['thread_name'][:40]} — {len(results)}건 저장")
+        if reflect:  # 디스코드 승인 버튼과 같은 반영 단계
+            outcomes = await spec_reflect.reflect_records([(x.record, x.notion_url) for x in results], user=approved_by)
+            for line in spec_reflect.format_outcomes(outcomes):
+                print(f"      {line}")
     print(f"\n저장 {total}건 (Notion 실패 {notion_fail}건)")
     trigger_reindex()
 
@@ -247,10 +252,11 @@ def main():
     ap.add_argument("--approved-by", default="일괄정리", help="저장 시 승인자 이름")
     ap.add_argument("--force", action="store_true", help="이미 저장된 스레드도 다시 요약/저장")
     ap.add_argument("--limit", type=int, help="앞에서부터 N개만 (시험용)")
+    ap.add_argument("--no-reflect", action="store_true", help="저장만 하고 원천 정책서 반영 제안은 하지 않음")
     args = ap.parse_args()
 
     if args.commit:
-        asyncio.run(commit(args.commit, args.approved_by, args.force))
+        asyncio.run(commit(args.commit, args.approved_by, args.force, reflect=not args.no_reflect))
     elif args.links:
         if not DISCORD_TOKEN or not ANTHROPIC_API_KEY:
             raise SystemExit(".env에 DISCORD_TOKEN, ANTHROPIC_API_KEY가 필요해요.")

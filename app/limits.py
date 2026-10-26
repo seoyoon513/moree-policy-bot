@@ -46,11 +46,17 @@ def month_spend(now: datetime | None = None) -> float:
                      if (t := _kst(r["ts"])).year == n.year and t.month == n.month), 4)
 
 
+def check_budget(s: Settings, spend: float | None = None) -> float:
+    """월 예산을 다 썼으면 LimitExceeded. 답변 외 LLM 호출(정책서 매칭 등)도 이걸 거친다."""
+    spend = month_spend() if spend is None else spend
+    if s.monthly_budget_usd and s.budget_hard_stop and spend >= s.monthly_budget_usd:
+        raise LimitExceeded("budget", f"이번 달 예산(${s.monthly_budget_usd:.2f})을 모두 사용해서 멈췄어요. 관리자에게 문의해 주세요.")
+    return spend
+
+
 def check_answer_allowed(user: str | None, s: Settings) -> dict:
     """답변 전에 호출. 막아야 하면 LimitExceeded, 아니면 현재 사용량을 돌려준다."""
-    spend = month_spend()
-    if s.monthly_budget_usd and s.budget_hard_stop and spend >= s.monthly_budget_usd:
-        raise LimitExceeded("budget", f"이번 달 예산(${s.monthly_budget_usd:.2f})을 모두 사용해서 답변을 멈췄어요. 관리자에게 문의해 주세요.")
+    spend = check_budget(s)
     used = answers_today(user) if user else 0
     if user and s.daily_answer_limit and used >= s.daily_answer_limit:
         raise LimitExceeded("daily", f"오늘 질문 한도({s.daily_answer_limit}회)를 다 썼어요. 내일 다시 시도하거나 /정책검색을 이용해 주세요.")

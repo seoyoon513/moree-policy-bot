@@ -142,6 +142,15 @@ async def save_record(record: dict) -> str:
     return page.get("url", "")
 
 
+async def find_record_url(record_id: str) -> str | None:
+    """기록ID로 결정 기록 페이지 URL을 찾는다 (저장된 기록을 나중에 정책서에 반영할 때 링크용)."""
+    res = await get_client().data_sources.query(
+        data_source_id=NOTION_DATA_SOURCE_ID, page_size=1,
+        filter={"property": "기록ID", "rich_text": {"equals": record_id}},
+    )
+    return res["results"][0].get("url") if res.get("results") else None
+
+
 async def create_database(parent_page_id: str) -> dict:
     """부모 페이지 아래에 히스토리 DB를 만든다. setup_notion.py에서 1회 실행."""
     db = await get_client().databases.create(

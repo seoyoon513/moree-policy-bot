@@ -9,6 +9,7 @@ import logging
 
 import discord
 
+import spec_reflect
 from config import APPROVAL_TIMEOUT, STATUSES
 from policy_search import schedule_reindex
 from storage import save_decisions
@@ -215,6 +216,14 @@ class ApprovalView(discord.ui.View):
             lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
         await interaction.edit_original_response(content="\n".join(lines)[:2000])
         schedule_reindex()  # 새 결정을 검색 인덱스에 반영 (백그라운드)
+
+        # 원천 정책서 반영 제안 (정책서가 설정된 영역의 최종결정만). 원문은 고치지 않고 댓글·콜아웃만 넣는다
+        if spec_reflect.NOTION_SPEC_PAGES:
+            await interaction.edit_original_response(content="\n".join(lines + ["📚 기준 정책서 반영 제안 중…"])[:2000])
+            outcomes = await spec_reflect.reflect_records([(r.record, r.notion_url) for r in results],
+                                                          user=str(interaction.user.id))
+            await interaction.edit_original_response(
+                content="\n".join(lines + spec_reflect.format_outcomes(outcomes))[:2000])
 
     @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, row=2)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):

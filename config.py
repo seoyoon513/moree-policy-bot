@@ -21,6 +21,29 @@ NOTION_DATA_SOURCE_ID = os.environ.get("NOTION_DATA_SOURCE_ID", "").strip()
 
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 
+
+def _area_pages(raw: str) -> dict[str, str]:
+    """"북마크=<페이지 URL/ID>,리뷰=<...>" → {기능영역: 페이지 값}. 쉼표·줄바꿈으로 구분."""
+    out = {}
+    for part in raw.replace("\n", ",").split(","):
+        if "=" in part:
+            area, page = part.split("=", 1)
+            if area.strip() and page.strip():
+                out[area.strip()] = page.strip()
+    return out
+
+
+# 원천 정책서(기능명세서) 반영 제안 — 기능영역별 정책서 페이지. 비우면 반영 단계를 건너뛴다
+NOTION_SPEC_PAGES = _area_pages(os.environ.get("NOTION_SPEC_PAGES", ""))
+# 반영 제안을 낼 상태. 논의중까지 올리면 PM에게 확정 안 된 제안이 쌓인다
+SPEC_REFLECT_STATUSES = [s.strip() for s in os.environ.get("SPEC_REFLECT_STATUSES", "최종결정").split(",") if s.strip()]
+# 반영 제안 댓글에서 멘션할 노션 사용자 ID (PM). 비우면 멘션 없이 댓글만
+NOTION_PM_USER_IDS = [s.strip() for s in os.environ.get("NOTION_PM_USER_IDS", "").split(",") if s.strip()]
+# 맞는 정책서를 못 찾은 제안을 모으는 페이지 (scripts/setup_spec_inbox.py로 생성). 비우면 디스코드에만 보고
+NOTION_SPEC_INBOX_PAGE = os.environ.get("NOTION_SPEC_INBOX_PAGE", "").strip()
+SPEC_MATCH_MODEL = os.environ.get("SPEC_MATCH_MODEL", "").strip() or CLAUDE_MODEL
+SPEC_MATCH_MAX_TOKENS = int(os.environ.get("SPEC_MATCH_MAX_TOKENS", "4096"))
+
 KST = ZoneInfo("Asia/Seoul")
 
 # 스레드에서 읽어올 최대 메시지 수 / LLM에 넣을 최대 글자 수
