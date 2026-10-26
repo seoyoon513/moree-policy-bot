@@ -47,7 +47,7 @@ Mac의 기존 인덱스/히스토리를 가져가려면 `scp -r ~/policy-bot/dat
 ```bash
 docker compose up -d --build
 docker compose ps                 # api 가 (healthy) 인지 확인
-docker compose logs -f bot        # "길드 ...에 커맨드 3개 등록" 확인
+docker compose logs -f bot        # "길드 ...에 커맨드 2개 등록" 확인
 ```
 처음 한 번 인덱스 생성:
 ```bash

@@ -1,12 +1,16 @@
 # policy-bot
 
-Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, 쌓인 결정을 RAG로 검색하고 질문하는 디스코드 봇.
+Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, 쌓인 결정과 기능명세서(정책서)를 RAG로 검색하고 질문하는 디스코드 봇.
 
-- `/정책정리` — 스레드 논의를 Claude가 정책 결정으로 요약 → 요청자 승인 → Notion DB + 로컬 JSON 저장
+- `/정책정리` — 스레드 논의를 Claude가 정책 결정으로 요약 → 요청자가 승인 화면에서 결정별로 수정·제외 → Notion DB + 로컬 JSON 저장.
+  승인하면 정책서에 **반영 제안**(댓글·색 콜아웃)도 남긴다. 정책서 원문은 고치지 않고 반영은 PM이 한다.
+  같은 스레드를 다시 정리하면 바뀐 결정만 이전 기록을 덮어쓰고, 이전 버전은 페이지 본문의 '변경 이력'에 남는다.
 - `/정책검색` — 저장된 결정을 의미 기반으로 검색 (LLM 호출 없음)
 - `@봇 질문` — 봇을 태그하고 자연어로 질문하면 검색된 결정만 근거로 Claude가 답변 (최신 결론 · 히스토리 · 충돌 · 확인 필요 + 출처).
   스레드 최근 메시지와 답장한 이전 Q/A를 맥락으로 써서 "이거 정책이랑 맞아?", "그럼 비회원은?" 같은 질문도 받는다. 봇 답변에 답장하면 대화가 이어진다.
   (예전 `/정책질문` 명령어를 대체)
+
+방향과 설계 결정은 [`docs/DIRECTION.md`](docs/DIRECTION.md), 작업 목록과 진행 상태는 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md), 배포는 [`docs/DEPLOY.md`](docs/DEPLOY.md)에 있다.
 
 ## 구조
 
@@ -15,7 +19,7 @@ flowchart LR
     U[Discord 사용자] --> B
 
     subgraph B[bot.py 프로세스]
-        S["/정책정리<br/>summarizer · views · storage"]
+        S["/정책정리<br/>summarizer · views · storage · spec_reflect"]
         P["policy_search.py · mention.py<br/>/정책검색 · @봇 질문"]
     end
 
@@ -27,6 +31,7 @@ flowchart LR
     S -- 승인 후 자동 호출 --> J
     P -- HTTP --> Q
     S --> N[(Notion DB)]
+    S -- 반영 제안 --> SP[(Notion 정책서<br/>댓글 · 콜아웃)]
     S --> H[(data/history.jsonl)]
     J --> C[(data/chroma)]
     Q --> C
@@ -46,26 +51,34 @@ flowchart LR
 | 임베딩 | `app/rag/embedder.py` | OpenAI 또는 로컬(e5) 모델로 벡터화 |
 | 저장 | `app/rag/store.py` | Chroma(`data/chroma`)에 저장. 청크 내용 해시가 바뀐 문서만 재처리 |
 | 검색 | `app/rag/retriever.py` | 유사도 검색(선택: + BM25 키워드 하이브리드 `keyword.py`) + 영역/상태 필터 + 점수 하한선 + 문서당 1개 + 재논의 짝 붙이기 |
+| 리랭킹 | `app/rag/reranker.py` | (선택) 후보를 작은 모델이 질문과 함께 읽고 다시 채점, 관련 없으면 거절 |
 | 생성 | `app/rag/generator.py` | 검색 결과를 `<context>`로 붙여(정책서/결정기록 구분, 재논의 관계 표시) Claude가 근거 기반 답변 |
 
 ## 폴더 구성
 
 ```
 ├── bot.py               # 디스코드 봇 진입점, /정책정리
-├── summarizer.py        # 스레드 → 정책 결정 요약 (Claude)
-├── prompts.py           # 요약 프롬프트 / 출력 스키마
-├── views.py             # 승인·취소 버튼, 승인 후 재인덱싱 요청
-├── storage.py           # 로컬 JSON + Notion 저장
-├── notion_store.py      # Notion DB 스키마와 저장
+├── thread_reader.py     # 스레드 메시지 읽기 (동의 리액션 표시 포함)
+├── summarizer.py        # 스레드 → 정책 결정 요약 (Claude), 재정리 시 new/update/unchanged 판정
+├── prompts.py           # 요약·정책서 매칭 프롬프트 / 출력 스키마
+├── views.py             # 승인 화면(결정별 수정·제외·연결 해제), 승인 후 재인덱싱·정책서 반영 호출
+├── storage.py           # 로컬 JSON(append-only 버전) + Notion 저장
+├── notion_store.py      # Notion DB 스키마, 저장·갱신, 변경 이력 본문
+├── spec_reflect.py      # 승인된 결정 → 정책서 매칭 → 댓글·콜아웃·미분류 페이지 반영 제안
 ├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
 ├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
 ├── mention.py           # @봇 멘션 질문 → 맥락 수집 → /policies/answers
-├── config.py            # 봇 설정 (기능영역, 상태 목록)
+├── config.py            # 봇 설정 (기능영역, 상태 목록, 정책서 페이지)
 ├── app/
 │   ├── config.py        # RAG/API 설정 (.env 공유)
-│   ├── api/             # FastAPI: main, routers, schemas, deps
-│   └── rag/             # 로더, 청킹, 임베딩, 저장소, 검색, 생성
-├── scripts/ingest.py    # CLI 인덱싱 + 검색 확인
+│   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
+│   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
+│   ├── evaluation.py    # 골든셋 평가 로직
+│   ├── api/             # FastAPI: main, routers(policies · sync · usage), schemas, deps
+│   └── rag/             # 로더(결정·정책서), 청킹, 임베딩, 저장소, 키워드, 검색, 리랭킹, 생성
+├── scripts/             # ingest · eval_rag · batch_summarize · 정책서 확인/반영 도구 (아래 각 절)
+├── eval/                # 골든셋 형식 설명과 예시 (실제 골든셋·결과는 git 제외)
+├── docs/                # DIRECTION · EXPERIMENTS · DEPLOY · CLONE_GUIDE
 └── tests/               # API 키 없이 도는 테스트
 ```
 
@@ -113,6 +126,9 @@ cp .env.example .env
 | `HYBRID_ENABLED` | | 벡터 + BM25 하이브리드 검색 (기본 꺼짐) |
 | `NOTION_SPEC_PAGES` | | 기능영역별 정책서 페이지. 반영 제안과 검색 인덱스에 같이 쓴다 (`SPEC_INDEX_ENABLED=false`로 인덱싱만 끔) |
 | `SUMMARY_MAX_TOKENS` | | 요약 응답 최대 토큰, 기본 8192 |
+| `NOTION_PM_USER_IDS`, `NOTION_SPEC_INBOX_PAGE`, `SPEC_REFLECT_STATUSES`, `SPEC_MATCH_MODEL` | | 정책서 반영 제안 설정 (아래 '정책서 반영 제안' 절) |
+| `DAILY_ANSWER_LIMIT` | | 사용자별 하루 멘션 답변 횟수, 기본 30 (0 = 제한 없음) |
+| `MONTHLY_BUDGET_USD`, `BUDGET_ALERT_RATIO`, `BUDGET_HARD_STOP`, `BUDGET_ALERT_WEBHOOK_URL` | | 월 예산, 알림 비율(기본 0.8), 초과 시 차단 여부, 알림 웹훅 |
 
 로컬 임베딩을 쓰려면 `pip install sentence-transformers` 후 `EMBEDDING_BACKEND=local`. 백엔드를 바꾸면 `python -m scripts.ingest --force`로 전체 재인덱싱한다.
 
@@ -124,7 +140,7 @@ uvicorn app.api.main:app --reload
 # 터미널 B — 봇
 python bot.py
 ```
-로그에 `길드 ...에 커맨드 3개 등록`이 뜨면 준비 완료.
+로그에 `길드 ...에 커맨드 2개 등록`(`/정책정리`, `/정책검색`)이 뜨면 준비 완료.
 
 처음 한 번은 인덱스를 만들어야 한다. API 서버가 떠 있는 상태에서:
 ```bash
@@ -133,6 +149,39 @@ curl -X POST localhost:8000/admin/sync-jobs \
   -H "Content-Type: application/json" -d '{}'
 ```
 이후 `/정책정리`로 승인한 결정은 자동으로 인덱스에 반영된다.
+
+## 정리 흐름 (`/정책정리`)
+1. 스레드를 읽는다 (동의 리액션 👍 ✅는 `[동의 리액션: 이름]`으로 대화록에 표시).
+2. Claude가 결정 단위로 요약한다. 상태(제안 · 논의중 · 최종결정)는 말한 사람의 직책이 아니라 대화의 확정 신호로 판단한다.
+   **결정일**은 근거 메시지 중 가장 늦은 시각, **정리일**은 승인 시각으로 따로 저장한다.
+3. 승인 화면에서 결정별로 [수정](주제·상태·결정·근거·적용범위) · [제외]를 할 수 있다. 고친 필드는 `edited_fields`에 남는다.
+4. 승인하면 Notion DB와 `data/`에 저장하고, 검색 인덱스를 갱신하고, 정책서에 반영 제안을 남긴다.
+
+**재정리**: 같은 스레드를 다시 정리하면 결정마다 `new` / `update` / `unchanged`를 판정한다. 정리 이후 새 메시지가 없으면 LLM을 부르지 않는다.
+`update`는 이전 기록을 덮어쓰고 이전 버전을 '변경 이력'에 남긴다. 이전이 최종결정인데 이번이 논의중이면 덮지 않고 새 기록으로 저장하고 "재논의 대상"으로 연결한다 (답변: "현재 A, B로 변경 논의 중").
+잘못 연결됐으면 승인 화면의 [연결 해제]로 새 기록으로 저장한다. 설계 이유는 `docs/DIRECTION.md` 2-1.
+
+## 정책서 반영 제안
+승인된 결정(기본: 최종결정만)을 `NOTION_SPEC_PAGES`의 정책서와 매칭해, **원문은 건드리지 않고 제안만** 남긴다. 반영은 PM이 한다.
+
+| 판정 | 동작 |
+|---|---|
+| `modify` (기존 정책 ID와 다름) | 해당 표 행에 댓글 (+ PM 멘션) |
+| `new` (화면은 있는데 ID 없음) | 그 화면 기능 표 뒤에 노란 콜아웃 |
+| `unknown` (위치 모름) | 정책서 페이지 댓글 |
+| `same` · `skip` | 이미 반영됨 / 정책서 대상 아님(디자인 리소스·구현 방식 등) → 아무것도 안 함 |
+| 정책서 없음 | `NOTION_SPEC_INBOX_PAGE`(미분류 제안 페이지)에 체크박스 |
+
+- 노션 통합에 **댓글 읽기·삽입 권한**(Capabilities → Comment)이 필요하다.
+- 같은 기록·같은 버전은 다시 달지 않고, 바뀐 기록(v2~)은 이전 제안 댓글 스레드에 답글로 단다.
+- 매칭은 정책서당 LLM 1회이고 비용은 `spec_match`로 기록된다. 결과는 `data/spec/reflections.jsonl`.
+
+```bash
+python -m scripts.setup_spec_inbox                      # 미분류 제안 페이지 최초 생성
+python -m scripts.dump_spec                             # 정책서가 정책 ID 단위로 어떻게 파싱되는지 확인
+python -m scripts.spec_match_preview --approved-by 이름   # 저장된 결정으로 매칭만 다시 (노션에 쓰지 않음)
+python -m scripts.reflect_saved --record <기록ID>         # 저장된 결정을 다시 반영 제안
+```
 
 ## API
 
@@ -153,6 +202,7 @@ Claude/OpenAI를 부를 때마다 `data/usage.jsonl`에 한 줄씩 기록된다 
 - 멘션 질문 답변 하단에 이번 답변의 토큰/비용/시간 표시
 - `GET /admin/usage?days=7` 로 기능별 합계·평균
 - 단가는 `.env`의 `PRICE_*` (USD/100만 토큰)
+- 사용자별 일일 답변 한도(`DAILY_ANSWER_LIMIT`)와 월 예산(`MONTHLY_BUDGET_USD`)도 이 파일을 기준으로 센다. 예산의 80%에서 알림, 초과하면 차단한다.
 
 ### 정확도
 `eval/golden.jsonl`(질문 → 정답 결정 제목 · 필수 단어) 기준으로 평가. 형식은 `eval/golden.example.jsonl`, 자세한 내용은 `eval/README.md`.
@@ -219,7 +269,9 @@ python -m pytest -q
 
 ## 저장 위치 (git 제외)
 - `data/decisions/<기능영역>/<시각>_<id>.json` — 결정 1건씩
-- `data/history.jsonl` — 전체 히스토리 (append-only)
+- `data/history.jsonl` — 전체 히스토리 (append-only. 재정리하면 같은 ID의 `version` 줄이 추가되고 마지막 줄이 현재 값)
+- `data/spec/` — 정책서 파싱 캐시, 반영 제안 기록
+- `data/usage.jsonl` — 토큰·비용 기록
 - `data/chroma/` — 검색 인덱스
 
 ## 트러블슈팅
@@ -235,6 +287,7 @@ python -m pytest -q
 | `insufficient_quota` (OpenAI) | API 크레딧 없음 |
 
 ## 다음 단계
-- Docker + docker-compose로 봇과 API를 한 번에 배포 (API는 내부망에만 노출)
-- API를 외부에 공개하게 되면 Nginx 리버스 프록시 + HTTPS, `/admin` 외부 차단
-- 동기화 작업 상태를 메모리 대신 영속 저장소로
+진행 상태와 순서는 `docs/EXPERIMENTS.md`. 남은 큰 항목:
+- 아직 정리되지 않은 최근 디스코드 논의를 질문 때 함께 조회 (2단계)
+- 요약 품질 평가셋 (Q-6), 답변 평가를 LLM 채점으로 보강
+- 서버 배포와 `mem_limit`/`cpus` 제한, 동기화 작업 상태의 영속 저장 (`docs/DEPLOY.md`)
