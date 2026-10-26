@@ -17,7 +17,7 @@ from anthropic import Anthropic
 
 from app import usage as usage_log
 from app.config import get_settings
-from app.evaluation import (aggregate_answers, aggregate_retrieval, answer_scores, load_golden,
+from app.evaluation import (aggregate_answers, aggregate_retrieval, answer_scores, by_type, load_golden,
                             retrieval_scores)
 from app.rag.embedder import build_embedder
 from app.rag.generator import AnswerGenerator, build_context
@@ -46,6 +46,13 @@ def judge(client: Anthropic, model: str, question: str, hits, answer: str) -> di
         return {"faithfulness": int(d["faithfulness"]), "relevance": int(d["relevance"]), "reason": d.get("reason", "")}
     except (ValueError, KeyError):
         return {}
+
+
+def print_by_type(table: dict[str, dict], keys: list[str]) -> None:
+    print("\n 유형      " + "  ".join(f"{k:<12}" for k in keys) + "  문항")
+    for t, a in table.items():
+        n = a.get("n", "")
+        print(f" {t:<9} " + "  ".join(f"{a.get(k)!s:<12}" for k in keys) + f"  {n}")
 
 
 def main():
@@ -103,7 +110,8 @@ def main():
               "rerank_last_failed_raw": rr.last_raw if rr else None,
               "rerank_model": s.rerank_model if args.rerank else None,
               "embedding": s.embedding_backend, "llm_model": s.llm_model,
-              "retrieval": aggregate_retrieval(rows), "items": rows}
+              "retrieval": aggregate_retrieval(rows), "retrieval_by_type": by_type(items, rows, aggregate_retrieval),
+              "items": rows}
 
     mode = f"리랭킹 {s.rerank_model}, 후보 {s.rerank_candidates}" if args.rerank else f"min_score={min_score}"
     print(f"\n=== 검색 평가 (k={args.k}, {mode}, {len(items)}문항) ===")
@@ -112,6 +120,7 @@ def main():
         top = ", ".join(f"{t[:18]}({sc:.2f})" for t, sc in r["results"][:3]) or "(결과 없음)"
         print(f"{mark} {r['id']} {r['question'][:28]:<28} → {top}")
     print(json.dumps(report["retrieval"], ensure_ascii=False, indent=2))
+    print_by_type(report["retrieval_by_type"], ["hit_at_k", "top1", "reject_acc"])
 
     if args.sweep:
         print("\n=== 하한선 스윕 ===\n min_score  hit@k   top1   MRR  거절정확도  전체정확도  평균결과수")
@@ -152,8 +161,10 @@ def main():
             extra += f" 채점={a['faithfulness']}/{a['relevance']}" if "faithfulness" in a else ""
             print(f"{'✅' if ok else '❌'} {it.id} tokens in/out={a['tokens'][0]}/{a['tokens'][1]}{extra}")
         report["answers"] = aggregate_answers(ans_rows)
+        report["answers_by_type"] = by_type(items, ans_rows, aggregate_answers)
         report["answer_items"] = ans_rows
         print(json.dumps(report["answers"], ensure_ascii=False, indent=2))
+        print_by_type(report["answers_by_type"], ["keyword_acc", "citation_rate", "reject_acc"])
 
     # 이번 실행에서 쓴 토큰/비용 (usage.jsonl에서 실행 시작 이후 기록만)
     spent = [r for r in usage_log.load() if r["ts"] >= started.isoformat()]

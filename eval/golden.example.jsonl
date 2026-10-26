@@ -1,3 +1,4 @@
 {"id": "q01", "question": "인터넷 없이 앱 켜면 어디로 가?", "expected_titles": ["오프라인 상태에서 앱 실행 시 진입 플로우"], "must_include": ["탭바"]}
 {"id": "q02", "question": "북마크 폴더 이름 최대 몇 글자야?", "expected_titles": ["폴더명 글자수 제한"], "must_include": ["18"]}
 {"id": "n01", "question": "리뷰 사진은 몇 장까지 올릴 수 있어?", "expected_titles": [], "must_include": []}
+{"id": "e01", "question": "/api/items 에 필터 파라미터 뭐 붙여?", "expected_titles": ["목록 조회 필터 통합"], "must_include": ["/api/items"], "type": "exact"}

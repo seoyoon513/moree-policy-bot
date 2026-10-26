@@ -11,6 +11,14 @@
 - 인용률     : [1] 같은 근거 표시가 있나 (근거 기반 답변 형식 준수)
 - 거절 정확도 : 없는 질문에 "확인되지 않음/찾지 못했습니다"라고 답했나
 - (선택) LLM 채점: 근거 충실도 · 질문 응답성 1~5점
+
+문항 유형(type) — 유형별로 따로 집계해 "어떤 질문에 약한지"를 본다 (EXPERIMENTS 0-1)
+- basic: 결정 DB에 있는 일반 질문 (기본값) / none: 문서에 없는 질문 (expected_titles가 비면 기본값)
+- exact: API 경로·필드명·버전 같은 정확 문자열 (하이브리드 검색 4-2의 대상)
+- spec: 결정 DB에는 없고 정책서에만 있는 내용 (정책서 인덱싱 4-1의 대상)
+- trap: 제안·논의중이거나 채택되지 않은 안. 답변이 확정처럼 말하면 오답 (must_include에 "제안" 등)
+- history: "처음엔/예전엔" 같은 변경 경위 질문
+- reopen: 재논의 중인 결정 / conflict: 노션과 디스코드가 다른 결정 (데이터가 생기면 추가)
 """
 from __future__ import annotations
 
@@ -30,6 +38,11 @@ class GoldenItem:
     expected_titles: list[str] = field(default_factory=list)
     must_include: list[str] = field(default_factory=list)
     area: str | None = None
+    type: str = ""
+
+    def __post_init__(self):
+        if not self.type:
+            self.type = "none" if self.is_negative else "basic"
 
     @property
     def is_negative(self) -> bool:
@@ -43,7 +56,7 @@ def load_golden(path: str | Path) -> list[GoldenItem]:
         if line and not line.startswith("//"):
             d = json.loads(line)
             items.append(GoldenItem(d["id"], d["question"], d.get("expected_titles", []),
-                                    d.get("must_include", []), d.get("area")))
+                                    d.get("must_include", []), d.get("area"), d.get("type", "")))
     return items
 
 
@@ -104,6 +117,7 @@ def aggregate_answers(rows: list[dict]) -> dict:
     neg = [r for r in rows if r["negative"]]
     avg = lambda xs: round(sum(xs) / len(xs), 3) if xs else None  # noqa: E731
     out = {
+        "n": len(rows),
         "keyword_acc": avg([float(r["keywords_ok"]) for r in pos]),
         "citation_rate": avg([float(r["cited"]) for r in pos]),
         "wrong_refusal_rate": avg([float(r["wrongly_refused"]) for r in pos]),
@@ -114,3 +128,11 @@ def aggregate_answers(rows: list[dict]) -> dict:
         out["judge_faithfulness"] = avg([r["faithfulness"] for r in judged])
         out["judge_relevance"] = avg([r["relevance"] for r in judged])
     return out
+
+
+def by_type(items: list[GoldenItem], rows: list[dict], aggregate) -> dict[str, dict]:
+    """rows는 items와 같은 순서. 유형별로 aggregate(rows)를 따로 계산한다."""
+    groups: dict[str, list[dict]] = {}
+    for it, r in zip(items, rows):
+        groups.setdefault(it.type, []).append(r)
+    return {t: aggregate(rs) for t, rs in sorted(groups.items())}

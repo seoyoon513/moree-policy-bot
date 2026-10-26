@@ -141,3 +141,20 @@ def test_reranker_uses_forced_tool_output():
     assert [h.page_id for h in r.rerank("q", _hits(), k=5)] == ["p3", "p2"]
     assert msgs.kw["tool_choice"] == {"type": "tool", "name": "submit_scores"}
     assert r.fallbacks == 0
+
+
+def test_golden_type_defaults_and_by_type(tmp_path):
+    from app.evaluation import by_type, load_golden
+    p = tmp_path / "g.jsonl"
+    p.write_text("\n".join([
+        '{"id": "q1", "question": "기본", "expected_titles": ["주소 검색"]}',
+        '{"id": "n1", "question": "없는 질문", "expected_titles": []}',
+        '{"id": "e1", "question": "/store/list 뭐야?", "expected_titles": ["목록"], "type": "exact"}',
+    ]), encoding="utf-8")
+    items = load_golden(p)
+    assert [it.type for it in items] == ["basic", "none", "exact"]
+    rows = [retrieval_scores(items[0], ["주소 검색 방식"]), retrieval_scores(items[1], []),
+            retrieval_scores(items[2], ["다른 문서"])]
+    table = by_type(items, rows, aggregate_retrieval)
+    assert table["basic"]["hit_at_k"] == 1.0 and table["exact"]["hit_at_k"] == 0.0
+    assert table["none"]["reject_acc"] == 1.0 and table["exact"]["n"] == 1

@@ -158,6 +158,7 @@ python -m scripts.eval_rag --sweep          # 검색: Hit@k · MRR · 거절 정
 python -m scripts.eval_rag --answers        # 답변: 핵심어 포함률 · 인용률 · 거절 정확도 + 1회당 비용
 python -m scripts.eval_rag --rerank --answers   # 리랭킹 켠 상태로 같은 평가 (전후 비교)
 ```
+결과는 문항 유형(`basic` · `exact` · `spec` · `trap` · `history` · `conflict` · `none`)별로도 나온다.
 
 ### 측정 결과 (2026-10-19, 결정 83건 · 38문항)
 | | 벡터 검색 | + LLM 리랭킹 |
