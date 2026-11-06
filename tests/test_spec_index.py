@@ -3,7 +3,7 @@ import uuid
 
 import pytest
 
-from app.config import Settings
+from shared.config import Settings
 from app.rag import ingest as ingest_mod
 from app.rag import spec_index
 from app.rag.chunker import chunk_document
@@ -48,7 +48,7 @@ def test_shared_spec_page_has_no_area():
 
 def test_spec_pages_setting_parses_areas_and_default():
     s = Settings(_env_file=None, notion_spec_pages=f"북마크=https://www.notion.so/x-{PAGE}, 지도·탐색={PAGE}\n*={'f' * 32}")
-    assert s.spec_pages() == {PAGE: ["북마크", "지도·탐색"], "f" * 32: []}
+    assert spec_index.spec_pages(s) == {PAGE: ["북마크", "지도·탐색"], "f" * 32: []}
 
 
 @pytest.fixture

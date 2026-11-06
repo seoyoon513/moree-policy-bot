@@ -14,8 +14,8 @@ from fastapi import Depends, FastAPI, Request
 from app.api.deps import get_store
 from app.api.routers import policies, reconciliation, summaries, sync, usage
 from app import ops
-from app.config import Settings, get_settings
-from app.logging_setup import new_request_id, set_request_id, setup_logging
+from shared.config import Settings, get_settings
+from shared.logging_setup import new_request_id, set_request_id, setup_logging
 from app.rag.store import VectorStore
 
 log = logging.getLogger("policy-api")

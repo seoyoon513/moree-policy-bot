@@ -3,7 +3,7 @@
 - 환경변수를 os.environ으로 직접 읽지 않는다. 새 설정은 여기에 필드로 추가한다.
 - 우선순위: 환경변수(Docker env_file 포함) > .env 파일 > 기본값.
 - 읽을 .env 파일은 ENV_FILE로 바꿀 수 있다 (빈 값 = 파일을 읽지 않음, 테스트용).
-- 봇 코드의 `from config import X`는 루트 config.py가 이 값을 같은 이름으로 다시 내보낸다.
+- 봇(bot/)·API(app/)·스크립트가 모두 이 모듈을 직접 쓴다 (예전 루트 config.py 재수출 층은 없앴다).
 """
 import os
 from functools import lru_cache
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     notion_token: str = ""
     notion_data_source_id: str = ""
     notion_database_id: str = ""
-    notion_parent_page_id: str = ""   # setup_notion.py · setup_spec_inbox.py에서만 사용
+    notion_parent_page_id: str = ""   # scripts/setup_notion.py · setup_spec_inbox.py에서만 사용
 
     # --- 정책서 인덱싱 (EXPERIMENTS 4-1) ---
     # 봇의 NOTION_SPEC_PAGES와 같은 값: "북마크=<페이지 URL/ID>,리뷰=<...>" ("*"는 기본 정책서). 비우면 결정 DB만 인덱싱
@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     followup_interval_s: int = 30        # 후속 작업 장부를 확인하는 간격
     periodic_sync_minutes: int = 10      # 주기 재인덱싱 간격 (0 = 끔). 승인 외 변경(노션 직접 수정 등)도 이 안에 반영
 
-    # --- 로그·운영 (app/logging_setup.py) ---
+    # --- 로그·운영 (shared/logging_setup.py) ---
     log_format: str = "text"          # text | json (서버에서는 json)
     log_level: str = "INFO"
     # 운영 알림(봇 시작 등)을 보낼 Discord 웹훅. 비우면 budget_alert_webhook_url, 그것도 비우면 로그만
@@ -178,22 +178,11 @@ class Settings(BaseSettings):
             out.append(f"RAG_SOURCE는 auto|notion|jsonl 중 하나여야 해요 (지금: {self.rag_source}).")
         return out
 
-    def warnings(self) -> list[str]:
-        """실행은 되지만 확인이 필요한 설정."""
+    def warnings(self, role: str = "api") -> list[str]:
+        """실행은 되지만 확인이 필요한 설정. 관리자 토큰은 API만 쓴다 (A-6 이후 봇은 관리자 API를 부르지 않는다)."""
         out = []
-        if self.admin_token == "change-me":
+        if role == "api" and self.admin_token == "change-me":
             out.append("ADMIN_TOKEN이 기본값(change-me)이에요. 외부에 열기 전에 바꿔 주세요.")
-        return out
-
-    def spec_pages(self) -> dict[str, list[str]]:
-        """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 (검색 인덱스용, "*"는 기본 정책서라 영역에서 뺀다).
-        같은 NOTION_SPEC_PAGES 값을 spec_pages_by_area()와 반대 방향으로 본 것."""
-        from app.notion.client import notion_id
-        out: dict[str, list[str]] = {}
-        for area, page in self.spec_pages_by_area().items():
-            areas = out.setdefault(notion_id(page), [])
-            if area != "*":
-                areas.append(area)
         return out
 
     def resolved_source(self) -> str:

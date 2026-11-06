@@ -8,8 +8,8 @@ from app.notion import schema as notion_schema
 from app.services import storage
 from app.services.prompts import SYSTEM_PROMPT
 from app.services.summarizer import ThreadMessage, extract_urls, normalize
-from thread_reader import agreed_users, to_thread_messages
-from views import ApprovalView, EditModal, apply_edit, build_embeds
+from bot.thread_reader import agreed_users, to_thread_messages
+from bot.views import ApprovalView, EditModal, apply_edit, build_embeds
 
 T0 = datetime(2026, 6, 1, 3, 0, tzinfo=timezone.utc)  # KST 12:00
 

@@ -1,8 +1,8 @@
 """디스코드 메시지 → ThreadMessage 변환. 봇(/정책정리)과 일괄 정리 스크립트가 같은 규칙을 쓰도록 한 곳에 둔다."""
 import discord
 
-from config import AGREE_EMOJIS
-from app.domain import ThreadMessage
+from shared.domain import AGREE_EMOJIS
+from shared.domain import ThreadMessage
 
 
 def format_content(m: discord.Message) -> str:

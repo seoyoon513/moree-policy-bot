@@ -8,7 +8,7 @@ from app import limits
 from app import usage as usage_log
 from app.api import deps
 from app.api.main import app
-from app.config import Settings
+from shared.config import Settings
 from tests.test_rag_api import FakeGenerator, setup  # noqa: F401  (fixture 재사용)
 
 

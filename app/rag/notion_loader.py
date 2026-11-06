@@ -7,7 +7,7 @@
 봇은 결정 1건 = 페이지 1개로 저장하고, 결정/근거 등 핵심 내용을 '속성'에 넣는다.
 그래서 본문 블록을 따로 읽지 않고 속성만으로 문서를 만든다 → 페이지당 API 호출 0회 추가.
 """
-from app.config import Settings
+from shared.config import Settings
 from app.ledger import Ledger
 from app.notion import schema as ns
 from app.notion.client import new_sync_client

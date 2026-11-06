@@ -16,7 +16,7 @@ from pathlib import Path
 from app.llm import LLMClient, text_of
 
 from app import usage as usage_log
-from app.config import get_settings
+from shared.config import get_settings
 from app.evaluation import (aggregate_answers, aggregate_retrieval, answer_scores, by_type, load_golden,
                             retrieval_scores)
 from app.rag.embedder import build_embedder

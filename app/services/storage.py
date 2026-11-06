@@ -23,8 +23,8 @@ from app.ledger import Ledger
 from app.outbox import NOTION_UPSERT, SPEC_REFLECT, Outbox, PendingOp, op_key
 from app.services import followups, spec_reflect
 from app.notion.decisions import DecisionRepository, get_decision_repository
-from app.config import get_settings
-from app.domain import KST, ThreadMessage
+from shared.config import get_settings
+from shared.domain import KST, ThreadMessage
 
 DATA_DIR = get_settings().data_dir  # 모듈 값: 테스트가 바꿔 끼운다
 

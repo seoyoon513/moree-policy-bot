@@ -10,10 +10,14 @@ import logging
 
 import discord
 
-from app.logging_setup import current_request_id, set_request_id
-from config import APPROVAL_TIMEOUT, STATUSES
-from policy_search import call_api
-from app.domain import ThreadMessage
+from shared.logging_setup import current_request_id, set_request_id
+from shared.config import get_settings
+from shared.domain import STATUSES
+from bot.policy_search import call_api
+from shared.domain import ThreadMessage
+
+_s = get_settings()
+APPROVAL_TIMEOUT = _s.approval_timeout
 
 log = logging.getLogger("policy-bot")
 

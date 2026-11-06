@@ -26,10 +26,17 @@ from pathlib import Path
 
 import discord
 
-from config import ANTHROPIC_API_KEY, DATA_DIR, DISCORD_TOKEN, KST, MAX_MESSAGES
+from shared.config import get_settings
+from shared.domain import KST
 from app.services.summarizer import SummaryError, ThreadMessage, summarize_thread
 from app.services.storage import resummary_context, thread_source
-from thread_reader import to_thread_messages
+from bot.thread_reader import to_thread_messages
+
+_s = get_settings()
+ANTHROPIC_API_KEY = _s.anthropic_api_key
+DATA_DIR = _s.data_dir
+DISCORD_TOKEN = _s.discord_token
+MAX_MESSAGES = _s.max_messages
 
 LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)(?:/(\d+))?")
 CONCURRENCY = 3  # 동시에 요약할 스레드 수 (Claude 레이트리밋 고려)
@@ -232,7 +239,7 @@ async def commit(review_path: str, approved_by: str, force: bool = False, reflec
 
 
 def trigger_reindex() -> None:
-    from app.config import get_settings
+    from shared.config import get_settings
     s = get_settings()
     url = s.policy_api_url.rstrip("/") + "/admin/sync-jobs"
     req = urllib.request.Request(url, data=b"{}", method="POST", headers={

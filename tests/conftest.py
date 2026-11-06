@@ -11,7 +11,7 @@ os.environ.setdefault("USAGE_LOG_DISABLED", "1")
 os.environ["API_KEY"] = ""
 os.environ["RERANK_ENABLED"] = "false"
 
-from app.config import get_settings  # noqa: E402
+from shared.config import get_settings  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

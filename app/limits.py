@@ -18,7 +18,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app import usage as usage_log
-from app.config import Settings
+from shared.config import Settings
 
 KST = ZoneInfo("Asia/Seoul")
 log = logging.getLogger("policy-api")

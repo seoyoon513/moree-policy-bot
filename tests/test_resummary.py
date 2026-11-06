@@ -10,7 +10,7 @@ from app.services import spec_reflect
 from app.services import storage
 from app.services.prompts import build_user_prompt, format_previous
 from app.services.summarizer import ThreadMessage, build_transcript, normalize
-from views import ApprovalView, relation_fields, set_relation_by_status, toggle_link
+from bot.views import ApprovalView, relation_fields, set_relation_by_status, toggle_link
 
 T0 = datetime(2026, 6, 1, 3, 0, tzinfo=timezone.utc)
 

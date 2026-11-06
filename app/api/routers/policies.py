@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from app.api.deps import get_generator, get_retriever, require_api_key
 from app import limits
 from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, QuotaInfo, SearchResponse, UsageInfo
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 from app.llm import LLMError
 from app.rag.generator import AnswerGenerator
 from app.rag.models import SearchHit

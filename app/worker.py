@@ -16,8 +16,8 @@ import asyncio
 import logging
 import time
 
-from app.config import Settings
-from app.logging_setup import new_request_id
+from shared.config import Settings
+from shared.logging_setup import new_request_id
 from app.notion.decisions import get_decision_repository
 from app.outbox import Outbox
 from app.services import followups

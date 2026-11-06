@@ -13,9 +13,14 @@ from pathlib import Path
 
 from app.notion import client as notion
 from app.rag.spec_loader import load_spec
-from config import DATA_DIR, NOTION_SPEC_PAGES, SPEC_REFLECT_STATUSES
+from shared.config import get_settings
 from app.services.spec_reflect import match_records
 from app.services.storage import current_records
+
+_s = get_settings()
+DATA_DIR = _s.data_dir
+NOTION_SPEC_PAGES = _s.spec_pages_by_area()
+SPEC_REFLECT_STATUSES = _s.spec_reflect_status_list()
 
 
 def load_records(approved_by: str | None, threads: list[str]) -> list[dict]:

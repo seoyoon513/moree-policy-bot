@@ -9,8 +9,8 @@
 import argparse
 import asyncio
 
-from app.config import get_settings
-from app.logging_setup import new_request_id, setup_logging
+from shared.config import get_settings
+from shared.logging_setup import new_request_id, setup_logging
 from app.notion.decisions import get_decision_repository
 from app.outbox import Outbox
 from app.services import followups

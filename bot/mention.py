@@ -16,7 +16,7 @@ import re
 
 import discord
 
-from policy_search import call_api, send_chunked
+from bot.policy_search import call_api, send_chunked
 
 log = logging.getLogger("policy-bot")
 

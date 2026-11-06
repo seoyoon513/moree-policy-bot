@@ -10,7 +10,7 @@ LLM 호출이 없어서 사용량 기록 대상이 아니다 (임베딩은 inges
 import asyncio
 import logging
 
-from app.config import Settings
+from shared.config import Settings
 from app.rag.models import PolicyDocument
 from app.rag.spec_loader import SpecDocument, SpecEntry, load_spec
 
@@ -56,11 +56,24 @@ def spec_documents(doc: SpecDocument, areas: list[str]) -> list[PolicyDocument]:
     return [entry_to_document(doc, e, area) for e in doc.entries if e.body.strip() or e.name.strip()]
 
 
+def spec_pages(settings: Settings) -> dict[str, list[str]]:
+    """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 ("*"는 기본 정책서라 영역에서 뺀다).
+    같은 NOTION_SPEC_PAGES 값을 Settings.spec_pages_by_area()(봇의 반영 제안용)와 반대 방향으로 본 것.
+    노션 ID 파싱이 필요해서 shared가 아니라 API 쪽에 둔다."""
+    from app.notion.client import notion_id
+    out: dict[str, list[str]] = {}
+    for area, page in settings.spec_pages_by_area().items():
+        areas = out.setdefault(notion_id(page), [])
+        if area != "*":
+            areas.append(area)
+    return out
+
+
 async def _load_all(settings: Settings) -> list[PolicyDocument]:
     from app.notion.client import new_async_client
     client = new_async_client(settings.notion_token)  # asyncio.run마다 새 루프라 공용 클라이언트를 쓰지 않는다
     docs: list[PolicyDocument] = []
-    for page_id, areas in settings.spec_pages().items():
+    for page_id, areas in spec_pages(settings).items():
         spec = await load_spec(client, page_id, f"{settings.data_dir}/spec")
         docs += spec_documents(spec, areas)
     return docs

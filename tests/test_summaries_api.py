@@ -9,7 +9,7 @@ from app.api import deps
 from app.api.main import app
 from app.api.routers import summaries as summaries_router
 from app.api.routers import sync
-from app.config import Settings
+from shared.config import Settings
 from app.services import approvals, spec_reflect, storage
 from app.services.summarizer import SummaryError
 

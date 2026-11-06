@@ -8,8 +8,12 @@ import asyncio
 import json
 
 from app.rag.spec_loader import entry_dict, load_spec
-from config import DATA_DIR, NOTION_SPEC_PAGES
+from shared.config import get_settings
 from app.notion.client import get_async_client as get_client, notion_id as extract_id
+
+_s = get_settings()
+DATA_DIR = _s.data_dir
+NOTION_SPEC_PAGES = _s.spec_pages_by_area()
 
 
 async def dump(page_ids: list[str], as_json: bool) -> None:

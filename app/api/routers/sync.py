@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from app.api.deps import get_embedder, get_store, require_admin
 from app.api.schemas import SyncJob, SyncJobCreate
 from app import ops
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 from app.rag.embedder import Embedder
 from app.rag.ingest import ingest_from_source
 from app.rag.store import VectorStore

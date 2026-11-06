@@ -6,7 +6,7 @@
 인터넷 ──(공개 IP)── [VM: Ubuntu]
                       ├─ docker network (compose 기본 네트워크)
                       │   ├─ api  : uvicorn :8000  ← 호스트의 127.0.0.1:8000 에만 연결
-                      │   └─ bot  : python bot.py  → http://api:8000 (내부 DNS)
+                      │   └─ bot  : python -m bot  → http://api:8000 (내부 DNS)
                       │                             → Discord Gateway (나가는 WebSocket)
                       └─ ./data  (볼륨: chroma 인덱스, history.jsonl, usage.jsonl)
 ```

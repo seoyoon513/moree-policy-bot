@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from fastapi import Depends, Header, HTTPException, status
 
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 from app.rag.embedder import Embedder, build_embedder
 from app.rag.generator import AnswerGenerator
 from app.rag.retriever import Retriever

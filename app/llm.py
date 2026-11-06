@@ -24,7 +24,7 @@ from anthropic import Anthropic, AsyncAnthropic
 
 from app import limits, ops
 from app import usage as usage_log
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 
 log = logging.getLogger("policy-llm")
 

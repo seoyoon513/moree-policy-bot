@@ -8,8 +8,12 @@
 import asyncio
 
 from app.notion import client as notion
-from config import NOTION_PARENT_PAGE_ID, NOTION_SPEC_INBOX_PAGE
-from setup_notion import update_env
+from shared.config import get_settings
+from scripts.setup_notion import update_env
+
+_s = get_settings()
+NOTION_PARENT_PAGE_ID = _s.notion_parent_page_id
+NOTION_SPEC_INBOX_PAGE = _s.notion_spec_inbox_page
 
 TITLE = "정책서 미분류 제안"
 GUIDE = ("정책봇이 맞는 정책서를 찾지 못한 반영 제안이 여기에 쌓여요. "

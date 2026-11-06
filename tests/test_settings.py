@@ -1,5 +1,5 @@
 """설정 통합(A-1): Settings 하나가 .env·환경변수를 읽고, 시작 시 문제를 알려 준다."""
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 
 PAGE = "a" * 32
 OTHER = "b" * 32
@@ -31,7 +31,8 @@ def test_claude_model_and_llm_model_are_one_setting(monkeypatch):
 def test_spec_pages_two_views_of_one_value():
     s = Settings(notion_spec_pages=f"북마크=https://www.notion.so/x-{PAGE}, 지도·탐색={PAGE}\n*={OTHER}")
     assert s.spec_pages_by_area() == {"북마크": f"https://www.notion.so/x-{PAGE}", "지도·탐색": PAGE, "*": OTHER}
-    assert s.spec_pages() == {PAGE: ["북마크", "지도·탐색"], OTHER: []}
+    from app.rag.spec_index import spec_pages
+    assert spec_pages(s) == {PAGE: ["북마크", "지도·탐색"], OTHER: []}
 
 
 def test_comma_lists():
@@ -66,7 +67,7 @@ def test_problems_for_api_keys():
 
 
 def test_admin_token_default_is_a_warning():
-    assert Settings().warnings()
+    assert Settings().warnings() and Settings().warnings("bot") == []  # 봇은 관리자 토큰을 안 쓴다
     assert Settings(admin_token="secret").warnings() == []
 
 

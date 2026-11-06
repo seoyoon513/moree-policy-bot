@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.api.main import app
-from app.config import Settings
+from shared.config import Settings
 from app.rag.chunker import chunk_document
 from app.rag.ingest import ingest_documents
 from app.rag.models import PolicyDocument

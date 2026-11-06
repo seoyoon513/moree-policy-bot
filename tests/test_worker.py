@@ -2,7 +2,7 @@
 import asyncio
 import time
 
-from app.config import Settings
+from shared.config import Settings
 from app.outbox import NOTION_UPSERT, Outbox
 from app.rag.ingest import ingest_documents
 from app.rag.models import PolicyDocument

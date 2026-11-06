@@ -1,7 +1,7 @@
 """하이브리드 검색(4-2) 테스트: BM25 토큰화·점수, RRF, 하한선·필터·캐시. 네트워크 없음, 데이터는 가짜."""
 import uuid
 
-from app.config import Settings
+from shared.config import Settings
 from app.rag.ingest import ingest_documents
 from app.rag.keyword import BM25, rrf, tokenize
 from app.rag.models import PolicyDocument

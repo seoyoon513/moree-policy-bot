@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import require_admin
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 from app.notion.decisions import get_decision_repository
 from app.services import reconcile
 

@@ -15,7 +15,7 @@ import re
 from notion_client import AsyncClient, Client
 from notion_client.client import RetryOptions
 
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 
 RETRY = RetryOptions(max_retries=3, initial_retry_delay_ms=1_000, max_retry_delay_ms=30_000)
 TIMEOUT_MS = 30_000

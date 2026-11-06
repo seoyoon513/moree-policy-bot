@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.domain import ThreadMessage
+from shared.domain import ThreadMessage
 from app.services import followups
 from app.services.storage import resummary_context, save_decisions, thread_source
 from app.services.summarizer import summarize_thread

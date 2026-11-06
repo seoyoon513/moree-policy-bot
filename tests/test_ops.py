@@ -8,8 +8,8 @@ from fastapi.testclient import TestClient
 from app import ops
 from app.api import deps
 from app.api.main import app
-from app.config import Settings
-from app.logging_setup import (JsonFormatter, _ContextFilter, current_request_id, new_request_id, set_request_id,
+from shared.config import Settings
+from shared.logging_setup import (JsonFormatter, _ContextFilter, current_request_id, new_request_id, set_request_id,
                                setup_logging)
 from app.rag.store import VectorStore
 
@@ -60,7 +60,7 @@ def test_setup_logging_does_not_stack_handlers():
 
 
 def test_bot_sends_request_id_header():
-    from policy_search import api_headers
+    from bot.policy_search import api_headers
     set_request_id("m-1234")
     assert api_headers({"X-Admin-Token": "t"})["X-Request-ID"] == "m-1234"
     set_request_id(None)
@@ -123,5 +123,5 @@ def test_log_format_is_validated():
 
 
 def test_startup_message_names_host():
-    from bot import startup_message
+    from bot.main import startup_message
     assert "devbox-1" in startup_message("devbox-1")

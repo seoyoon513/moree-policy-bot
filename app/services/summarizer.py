@@ -6,8 +6,8 @@ from datetime import datetime
 from app import limits
 from app.llm import LLMError, get_llm, text_of
 
-from app.config import get_settings
-from app.domain import AREAS, KST, STATUSES, ThreadMessage  # noqa: F401  (ThreadMessage: 예전 import 경로 유지)
+from shared.config import get_settings
+from shared.domain import AREAS, KST, STATUSES, ThreadMessage  # noqa: F401  (ThreadMessage: 예전 import 경로 유지)
 from app.services.prompts import SYSTEM_PROMPT, build_user_prompt, format_previous
 
 _s = get_settings()

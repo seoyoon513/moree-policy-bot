@@ -6,7 +6,7 @@ LLM/임베딩 API를 부를 때마다 응답의 usage(토큰 수)를 한 줄씩 
     record("answer", model, input_tokens=..., output_tokens=..., latency_ms=...)
     summarize(days=7)  # 기능별 합계
 
-단가는 .env의 PRICE_*로 바꿀 수 있다 (USD / 100만 토큰, app/config.py). 기본값은 작성 시점 공개 가격이라
+단가는 .env의 PRICE_*로 바꿀 수 있다 (USD / 100만 토큰, shared/config.py). 기본값은 작성 시점 공개 가격이라
 모델을 바꾸거나 가격이 바뀌면 반드시 다시 확인할 것.
 """
 from __future__ import annotations
@@ -20,8 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.config import get_settings
-from app.logging_setup import current_request_id
+from shared.config import get_settings
+from shared.logging_setup import current_request_id
 
 _lock = threading.Lock()
 

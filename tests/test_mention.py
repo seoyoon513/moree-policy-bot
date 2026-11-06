@@ -4,8 +4,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-import mention
-from policy_search import split_message
+from bot import mention
+from bot.policy_search import split_message
 
 BOT = NS(id=999, bot=True, display_name="정책봇")
 ROLE = NS(id=555)

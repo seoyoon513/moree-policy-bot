@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from app.domain import AREAS, STATUSES
+from shared.domain import AREAS, STATUSES
 
 DB_TITLE = "정책 결정 히스토리"
 

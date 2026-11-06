@@ -14,7 +14,12 @@ from pathlib import Path
 
 from app.notion.client import notion_id
 from app.notion.decisions import NotionDecisionRepository, create_database
-from config import NOTION_DATA_SOURCE_ID, NOTION_PARENT_PAGE_ID, NOTION_TOKEN
+from shared.config import get_settings
+
+_s = get_settings()
+NOTION_DATA_SOURCE_ID = _s.notion_data_source_id
+NOTION_PARENT_PAGE_ID = _s.notion_parent_page_id
+NOTION_TOKEN = _s.notion_token
 
 ENV_PATH = Path(".env")
 

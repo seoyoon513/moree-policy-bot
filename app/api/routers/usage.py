@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from app import limits
 from app import usage as usage_log
 from app.api.deps import require_admin
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 
 router = APIRouter(prefix="/admin/usage", tags=["admin"], dependencies=[Depends(require_admin)])
 

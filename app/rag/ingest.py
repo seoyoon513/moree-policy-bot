@@ -9,7 +9,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-from app.config import Settings
+from shared.config import Settings
 from app.rag.chunker import chunk_document
 from app.rag.embedder import Embedder
 from app.rag.models import Chunk, PolicyDocument

@@ -18,12 +18,12 @@ Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, �
 flowchart LR
     U[Discord 사용자] --> B
 
-    subgraph B["bot.py 프로세스 — 디스코드 UI만"]
+    subgraph B["bot/ 프로세스 — 디스코드 UI만"]
         S["/정책정리 · 승인 화면<br/>thread_reader · views"]
         P["/정책검색 · @봇 질문<br/>policy_search · mention"]
     end
 
-    subgraph A["FastAPI 프로세스 (uvicorn) — 저장소·LLM은 여기만"]
+    subgraph A["app/ 프로세스 (FastAPI·uvicorn) — 저장소·LLM은 여기만"]
         SU["/summaries<br/>정리 · 승인"]
         Q["/policies<br/>검색 · 답변"]
         J["재인덱싱<br/>(승인 직후 · /admin/sync-jobs)"]
@@ -60,30 +60,29 @@ flowchart LR
 ## 폴더 구성
 
 ```
-├── bot.py               # 디스코드 봇 진입점, /정책정리 (메시지 수집 → POST /summaries)
-├── thread_reader.py     # 스레드 메시지 읽기 (동의 리액션 표시 포함)
-├── views.py             # 승인 화면(결정별 수정·제외·연결 해제) → POST /summaries/{id}/approval
-├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
-├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
-├── mention.py           # @봇 멘션 질문 → 맥락 수집 → /policies/answers
-├── config.py            # 봇용 설정 이름표(app/config.py 값을 다시 내보냄) + 기능영역·상태 상수
-├── app/
-│   ├── config.py        # 설정 단일 출처 Settings (봇·API·스크립트 공용, .env/환경변수)
-│   ├── domain.py        # 기능영역·상태 등 도메인 상수
+├── bot/                 # 디스코드 봇 프로세스 = UI만 (python -m bot). app/은 import하지 않는다
+│   ├── main.py          # 진입점, /정책정리 (메시지 수집 → POST /summaries)
+│   ├── views.py         # 승인 화면(결정별 수정·제외·연결 해제) → POST /summaries/{id}/approval
+│   ├── mention.py       # @봇 멘션 질문 → 맥락 수집 → /policies/answers
+│   ├── policy_search.py # /정책검색, API 호출·메시지 분할 공용
+│   └── thread_reader.py # 스레드 메시지 읽기 (동의 리액션 표시 포함)
+├── shared/              # 봇과 API가 함께 쓰는 것만: config(Settings) · domain(상수·ThreadMessage) · logging_setup · alerts
+├── app/                 # API 프로세스 (uvicorn app.api.main:app) — LLM·노션·원장·검색은 여기만
 │   ├── ledger.py        # 결정 원장 data/history.jsonl 읽기·쓰기 (버전, 깨진 줄 건너뛰기, fsync)
+│   ├── outbox.py        # 후속 작업 장부 data/outbox.jsonl (노션 저장·정책서 반영의 결과, 재시도)
+│   ├── worker.py        # API 안 백그라운드 처리기 (후속 작업 재시도 · 주기 재인덱싱)
 │   ├── notion/          # 노션 접근은 여기만: client(재시도·로그) · schema(속성 이름, 쓰기·읽기 공용) · decisions(저장소)
 │   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
 │   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
 │   ├── llm.py           # Claude 호출 1곳: 예산 확인 → 호출 → 사용량 기록 → 오류 분류(사용자 문구)
-│   ├── logging_setup.py # 로그 설정 한 곳 (text/json, request_id)
-│   ├── ops.py           # 운영 알림 웹훅, 동기화 상태(data/sync_state.json), /health 내용
+│   ├── ops.py           # 동기화 상태(data/sync_state.json), /health 내용 (알림은 shared/alerts)
 │   ├── evaluation.py    # 골든셋 평가 로직
-│   ├── services/        # 흐름: summarizer(요약·재정리 판정) · prompts · storage(승인 저장) · spec_reflect(정책서 반영) · approvals(승인 대기·멱등 승인)
-│   ├── api/             # FastAPI: main, routers(policies · summaries · sync · usage), schemas, deps
+│   ├── services/        # 흐름: summarizer(요약·재정리 판정) · prompts · storage(승인 저장) · spec_reflect(정책서 반영) · approvals(승인 대기·멱등 승인) · followups(후속 작업 실행) · reconcile(원장↔노션 대조)
+│   ├── api/             # FastAPI: main, routers(policies · summaries · sync · usage · reconciliation), schemas, deps
 │   └── rag/             # 로더(결정·정책서), 청킹, 임베딩, 저장소, 키워드, 검색, 리랭킹, 생성
-├── scripts/             # ingest · eval_rag · batch_summarize · 정책서 확인/반영 도구 (아래 각 절)
+├── scripts/             # 관리 도구: setup_notion · ingest · eval_rag · batch_summarize · outbox · reconcile · 정책서 확인/반영
 ├── eval/                # 골든셋 형식 설명과 예시 (실제 골든셋·결과는 git 제외)
-├── docs/                # DIRECTION · EXPERIMENTS · DEPLOY · CLONE_GUIDE
+├── docs/                # ENGINEERING · DIRECTION · EXPERIMENTS · ARCHITECTURE_REVIEW · DEPLOY · CLONE_GUIDE
 └── tests/               # API 키 없이 도는 테스트
 ```
 
@@ -102,7 +101,7 @@ flowchart LR
 ### 2. Notion 연결 (선택)
 1. https://app.notion.com/developers/connections 에서 connection 생성 → 토큰 복사
 2. DB를 넣을 페이지 ··· → Add connections → 만든 connection 추가
-3. `.env`에 `NOTION_TOKEN`, `NOTION_PARENT_PAGE_ID` 입력 후 `python setup_notion.py`
+3. `.env`에 `NOTION_TOKEN`, `NOTION_PARENT_PAGE_ID` 입력 후 `python -m scripts.setup_notion`
 
 Notion을 설정하지 않으면 결정은 `data/history.jsonl`에만 저장되고, RAG도 이 파일을 읽는다.
 
@@ -119,7 +118,7 @@ cp .env.example .env
 | `ANTHROPIC_API_KEY` | ✅ (API) | 요약, 정책서 매칭, 멘션 질문 답변. 봇 프로세스에는 필요 없다 |
 | `GUILD_ID` | 권장 | 지정하면 해당 서버에 커맨드 즉시 등록 |
 | `CLAUDE_MODEL` | | 기본 `claude-sonnet-5-5` |
-| `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` | | Notion 저장/조회. `setup_notion.py`가 ID를 채움 |
+| `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` | | Notion 저장/조회. `scripts/setup_notion.py`가 ID를 채움 |
 | `EMBEDDING_BACKEND` | | `openai`(기본) 또는 `local` |
 | `OPENAI_API_KEY` | openai일 때 | 임베딩용 |
 | `RAG_SOURCE` | | `auto`(Notion 있으면 Notion) / `notion` / `jsonl` |
@@ -143,7 +142,7 @@ cp .env.example .env
 uvicorn app.api.main:app --reload
 
 # 터미널 B — 봇
-python bot.py
+python -m bot
 ```
 로그에 `길드 ...에 커맨드 2개 등록`(`/정책정리`, `/정책검색`)이 뜨면 준비 완료.
 

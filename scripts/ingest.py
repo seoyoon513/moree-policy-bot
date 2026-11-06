@@ -7,7 +7,7 @@
 """
 import argparse
 
-from app.config import get_settings
+from shared.config import get_settings
 from app.rag.embedder import build_embedder
 from app.rag.ingest import ingest_from_source
 from app.rag.retriever import Retriever

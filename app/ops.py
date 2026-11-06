@@ -1,6 +1,6 @@
 """운영 상태와 알림 (ARCHITECTURE_REVIEW A-2).
 
-- notify(): 운영 채널(디스코드 웹훅)로 한 줄 알림. 웹훅이 없으면 로그만. 실패해도 예외를 내지 않는다.
+- notify(): 운영 채널 알림 — shared/alerts.py (봇도 쓰므로 공용). 여기서 다시 내보낸다.
 - 동기화 상태: 마지막 재인덱싱 결과를 data/sync_state.json에 남긴다.
   작업 목록(_jobs)은 메모리라 API를 재시작하면 사라지지만, "마지막으로 언제 성공했나"는 /health에서 계속 보여야 한다.
 """
@@ -9,32 +9,16 @@ from __future__ import annotations
 import json
 import logging
 import os
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.config import Settings
+from shared.alerts import notify  # noqa: F401  (ops.notify로 부르는 곳·테스트 유지)
+from shared.config import Settings
 
 log = logging.getLogger("policy-ops")
 
 SYNC_FAILURE_ALERT_AT = 3  # 연속 실패가 이 횟수가 되는 순간 한 번 알린다
 PENDING_ALERT_AFTER = timedelta(minutes=30)  # 후속 작업(노션 저장 등)이 이보다 오래 대기하면 degraded
-
-
-def notify(s: Settings, message: str) -> bool:
-    """운영 알림. 보냈으면 True. 블로킹 호출이라 asyncio 코드에서는 asyncio.to_thread로 부른다."""
-    log.warning("운영 알림: %s", message)
-    url = s.resolved_ops_webhook_url()
-    if not url:
-        return False
-    try:
-        req = urllib.request.Request(url, method="POST", data=json.dumps({"content": message[:1900]}).encode(),
-                                     headers={"Content-Type": "application/json", "User-Agent": "policy-bot"})
-        urllib.request.urlopen(req, timeout=5).close()
-        return True
-    except OSError as e:  # 알림 실패가 본 기능을 막으면 안 된다
-        log.warning("운영 알림 전송 실패: %s", e)
-        return False
 
 
 def _now() -> str:

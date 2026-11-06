@@ -24,8 +24,8 @@ from pathlib import Path
 from app.notion import client as notion
 from app.llm import get_llm, text_of
 from app.rag.spec_loader import SpecDocument, SpecEntry, load_spec
-from app.config import get_settings
-from app.domain import KST
+from shared.config import get_settings
+from shared.domain import KST
 from app.services.prompts import SPEC_MATCH_SYSTEM, build_spec_match_prompt
 from app.services.summarizer import SummaryError, parse_json
 

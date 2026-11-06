@@ -1,5 +1,5 @@
 """도메인 상수 — 환경변수가 아니라 코드로 정하는 값. 봇·API·노션 스키마가 같이 쓴다.
-루트 config.py가 같은 이름으로 다시 내보낸다 (`from config import AREAS`도 그대로 동작)."""
+봇(bot/)과 API(app/)가 `from shared.domain import AREAS`처럼 직접 쓴다."""
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo

@@ -40,7 +40,7 @@ services:
 
   bot:
     image: policy-bot:latest        # api가 빌드한 같은 이미지 재사용
-    command: ["python", "bot.py"]
+    command: ["python", "-m", "bot"]
     env_file: .env
     environment:
       # 컨테이너끼리는 compose 네트워크 안에서 '서비스 이름'이 곧 호스트명(내부 DNS)

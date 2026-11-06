@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from app import ops as ops_mod
-from app.config import Settings
+from shared.config import Settings
 from app.outbox import MAX_ATTEMPTS, NOTION_UPSERT, SPEC_REFLECT, Outbox, op_key
 from app.services import followups, spec_reflect, storage
 

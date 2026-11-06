@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from typing import Protocol
 
-from app.config import Settings, get_settings
+from shared.config import Settings, get_settings
 from app.notion import client as notion
 from app.notion.schema import (APPROVED_AT, AREA, DB_TITLE, DECISION, PROPERTIES, RECORD_ID, STATUS, TITLE,
                                build_properties, prop_to_str, rich_text)

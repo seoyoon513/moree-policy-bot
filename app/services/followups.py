@@ -53,7 +53,7 @@ async def run_notion(op: PendingOp, outbox: Outbox, repo: DecisionRepository) ->
 def _alert_dead(op: PendingOp, error: str) -> None:
     """포기한 작업은 사람이 봐야 한다 → 운영 알림 (웹훅이 없으면 로그만)."""
     from app import ops
-    from app.config import get_settings
+    from shared.config import get_settings
     ops.notify(get_settings(), f"⚠️ 후속 작업을 포기했어요 — {op.op} · {op.record.get('topic', '')[:60]} "
                                f"(기록 {op.record['id']} v{op.record.get('version', 1)}): {error[:200]}\n"
                                f"확인: python -m scripts.outbox list")

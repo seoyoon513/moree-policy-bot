@@ -73,7 +73,7 @@ def setup_logging(service: str, *, fmt: str | None = None, level: str | None = N
     """루트 로거에 핸들러 하나를 단다. 여러 번 불러도 핸들러가 쌓이지 않는다.
     fmt·level을 안 주면 Settings(LOG_FORMAT·LOG_LEVEL)를 쓴다."""
     if fmt is None or level is None:
-        from app.config import get_settings
+        from shared.config import get_settings
         s = get_settings()
         fmt = fmt or s.log_format
         level = level or s.log_level

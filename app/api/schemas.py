@@ -117,7 +117,7 @@ class DecisionIn(BaseModel):
     @field_validator("area")
     @classmethod
     def _area(cls, v):
-        from app.domain import AREAS
+        from shared.domain import AREAS
         if v not in AREAS:
             raise ValueError(f"기능영역은 {AREAS} 중 하나여야 해요")
         return v
@@ -125,7 +125,7 @@ class DecisionIn(BaseModel):
     @field_validator("status")
     @classmethod
     def _status(cls, v):
-        from app.domain import STATUSES
+        from shared.domain import STATUSES
         if v not in STATUSES:
             raise ValueError(f"상태는 {STATUSES} 중 하나여야 해요")
         return v

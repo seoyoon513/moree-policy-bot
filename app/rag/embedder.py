@@ -2,7 +2,7 @@
 from typing import Protocol
 
 from app import usage as usage_log
-from app.config import Settings
+from shared.config import Settings
 
 
 class Embedder(Protocol):

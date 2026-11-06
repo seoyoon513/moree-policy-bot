@@ -13,8 +13,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from app import limits
 from app.api.deps import get_embedder, get_store, require_api_key
 from app.api.schemas import ApprovalCreate, ApprovalResult, SummaryCreate, SummaryResult
-from app.config import Settings, get_settings
-from app.domain import ThreadMessage
+from shared.config import Settings, get_settings
+from shared.domain import ThreadMessage
 from app.rag.embedder import Embedder
 from app.rag.store import VectorStore
 from app.services import approvals

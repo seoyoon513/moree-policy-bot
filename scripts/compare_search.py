@@ -8,7 +8,7 @@ import math
 import re
 import sys
 
-from app.config import get_settings
+from shared.config import get_settings
 from app.rag.embedder import build_embedder
 from app.rag.notion_loader import build_loader
 

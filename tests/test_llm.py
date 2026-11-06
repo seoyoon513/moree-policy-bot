@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app import limits, llm, usage
-from app.logging_setup import set_request_id
+from shared.logging_setup import set_request_id
 
 REQ = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
 

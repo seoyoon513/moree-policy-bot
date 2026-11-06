@@ -56,16 +56,19 @@ flowchart LR
 
 ### 구성 요소
 
+폴더가 곧 프로세스 경계다: **`bot/`**(디스코드 UI 프로세스) → **`shared/`**(둘이 함께 쓰는 설정·도메인 상수·로그·알림) ← **`app/`**(API 프로세스). `bot/`은 `app/`을 한 모듈도 import하지 않고, `shared/`는 어느 쪽도 import하지 않는다. 둘 다 테스트가 확인한다. `scripts/`는 관리 도구다.
+
+
 | 구성 | 위치 | 하는 일 |
 |---|---|---|
-| 봇 | `bot.py` · `views.py` · `mention.py` · `policy_search.py` | 스레드 메시지 수집, 승인 화면(결정별 수정·제외), 답변 표시. **LLM·노션·원장 코드를 import하지 않는다** (테스트로 고정) |
+| 봇 | `bot/` (main · views · mention · policy_search · thread_reader) | 스레드 메시지 수집, 승인 화면(결정별 수정·제외), 답변 표시. **LLM·노션·원장 코드를 import하지 않는다** (테스트로 고정) |
 | 흐름 | `app/services/` | 요약·재정리 판정(`summarizer`), 승인 저장(`storage`), 정책서 반영 제안(`spec_reflect`), 승인 대기·멱등 승인(`approvals`), 후속 작업 실행(`followups`), 대조(`reconcile`) |
 | 노션 | `app/notion/` | 클라이언트 생성 1곳(재시도·로그), 속성 스키마 1곳(쓰기·읽기 공용), 결정 기록 저장소(`DecisionRepository`) |
 | 원장·장부 | `app/ledger.py` · `app/outbox.py` | 승인된 버전의 append-only 기록, 후속 작업 결과 |
 | 검색 | `app/rag/` | 로더 → 청킹 → 임베딩 → Chroma → 벡터(+BM25) 검색 → LLM 리랭크 → 답변 생성 |
 | LLM | `app/llm.py` | 모든 Claude 호출의 단일 통로: 예산 확인 → 호출 → 사용량 기록 → 오류 분류 |
-| 운영 | `app/logging_setup.py` · `app/ops.py` · `app/worker.py` | 로그·request_id, 운영 알림·`/health`, 백그라운드 처리기 |
-| 설정 | `app/config.py` | `.env`·환경변수를 읽는 유일한 곳 (`Settings`) |
+| 운영 | `shared/logging_setup.py` · `shared/alerts.py` · `app/ops.py` · `app/worker.py` | 로그·request_id, 운영 알림·`/health`, 백그라운드 처리기 |
+| 공용 | `shared/` | 봇과 API가 함께 쓰는 것만: 설정 `Settings`(`.env`·환경변수를 읽는 유일한 곳), 도메인 상수, 로그, 알림 |
 
 ---
 

@@ -4,7 +4,7 @@ import json
 import discord
 from discord import app_commands
 
-from app.config import Settings
+from shared.config import Settings
 from app.rag.chunker import chunk_document
 from app.rag.notion_loader import JsonlLoader, build_loader, NotionLoader, page_to_document
 
@@ -81,7 +81,7 @@ def test_claude_model_env_is_shared(monkeypatch):
 
 
 def test_policy_commands_register_on_client_tree():
-    from policy_search import register_policy_commands
+    from bot.policy_search import register_policy_commands
     client = discord.Client(intents=discord.Intents.default())
     tree = app_commands.CommandTree(client)
     register_policy_commands(tree)
@@ -95,8 +95,8 @@ def test_bot_summary_payload_matches_api_schema():
     from types import SimpleNamespace
 
     from app.api.schemas import SummaryCreate
-    from app.domain import ThreadMessage
-    from bot import summary_payload
+    from shared.domain import ThreadMessage
+    from bot.main import summary_payload
     thread = SimpleNamespace(id=123, name="가짜 스레드", jump_url="https://discord.com/channels/1/123")
     msgs = [ThreadMessage(1, "가짜", datetime(2026, 6, 1, tzinfo=timezone.utc), "안녕", "https://discord.com/x", ["동료"])]
     body = SummaryCreate.model_validate(summary_payload(thread, msgs, 42))
@@ -104,7 +104,7 @@ def test_bot_summary_payload_matches_api_schema():
 
 
 def test_approval_lines_from_api_result():
-    from views import approval_error_text, approval_lines
+    from bot.views import approval_error_text, approval_lines
     result = {"saved": [{"id": "a", "topic": "주제A", "version": 2, "updated": True, "notion_url": "https://n/a"},
                         {"id": "b", "topic": "주제B", "version": 1, "updated": False, "notion_error": "503"}],
               "reflect_lines": ["📚 기준 정책서 반영 제안", "• ✔️ 이미 반영됨 · 주제A"], "replayed": True}
@@ -114,12 +114,26 @@ def test_approval_lines_from_api_result():
     assert "만료" in approval_error_text(404, {})
 
 
-def test_bot_process_does_not_import_llm_or_notion():
-    """A-6: 봇은 디스코드 UI만. LLM·노션·벡터DB·흐름 코드는 API 프로세스만 가진다 (새 프로세스에서 확인)."""
+def test_bot_process_imports_only_shared_not_app():
+    """폴더 경계: bot/ → shared/ ← app/. 봇 프로세스는 shared만 쓰고 app(API 쪽: LLM·노션·원장·벡터DB·흐름)은
+    한 모듈도 import하지 않는다. 무거운 라이브러리도 마찬가지 (새 프로세스에서 확인)."""
     import subprocess
     import sys
-    code = ("import bot, sys; print(sorted(m for m in sys.modules if m.split('.')[0] in "
-            "('anthropic', 'notion_client', 'chromadb', 'openai') or m.startswith(('app.llm', 'app.notion', "
-            "'app.services', 'app.rag', 'app.ledger'))))")
+    code = ("import bot.main, sys; print(sorted(m for m in sys.modules if m == 'app' or m.startswith('app.') "
+            "or m.split('.')[0] in ('anthropic', 'notion_client', 'chromadb', 'openai', 'fastapi')))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={"ENV_FILE": "", "PATH": ""})
+    assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "[]", out.stdout + out.stderr
+
+
+def test_shared_does_not_depend_on_bot_or_app():
+    """shared는 양쪽이 쓰는 바닥이라 bot·app 어느 쪽도 import하지 않는다 (순환·경계 침범 방지)."""
+    import ast
+    from pathlib import Path
+    bad = []
+    for p in Path(__file__).resolve().parents[1].joinpath("shared").glob("*.py"):
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
+                [node.module or ""] if isinstance(node, ast.ImportFrom) else []
+            bad += [f"{p.name}: {n}" for n in names if n.split(".")[0] in ("bot", "app")]
+    assert bad == []

@@ -3,7 +3,7 @@
 질문 답변은 `@봇` 멘션으로 받는다 (mention.py). 승인 후 재인덱싱은 API가 직접 한다.
 
 bot.py에서:
-    from policy_search import register_policy_commands
+    from bot.policy_search import register_policy_commands
     register_policy_commands(bot.tree)
 
 API 서버 주소: .env 의 POLICY_API_URL (기본 http://localhost:8000)
@@ -15,9 +15,9 @@ import aiohttp  # discord.py 의존성이라 이미 설치되어 있음
 import discord
 from discord import app_commands
 
-from app.config import get_settings
-from app.logging_setup import current_request_id, new_request_id
-from config import AREAS, STATUSES
+from shared.config import get_settings
+from shared.logging_setup import current_request_id, new_request_id
+from shared.domain import AREAS, STATUSES
 
 log = logging.getLogger("policy-bot")
 
