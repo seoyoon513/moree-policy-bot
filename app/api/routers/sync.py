@@ -8,6 +8,8 @@ RESTful 설계 메모
   대신 마지막 결과(성공 시각·연속 실패 수)는 data/sync_state.json에 남겨 /health에서 본다 (app/ops.py).
 """
 import logging
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -26,13 +28,53 @@ log = logging.getLogger("policy-api")
 router = APIRouter(prefix="/admin/sync-jobs", tags=["admin"], dependencies=[Depends(require_admin)])
 
 _jobs: dict[str, SyncJob] = {}
+_lock = threading.Lock()
+_rerun = False  # 돌고 있는 동안 새 요청이 오면, 끝난 뒤 한 번 더 (방금 저장한 결정을 그 작업이 못 읽었을 수 있다)
+
+# 노션은 방금 만든 페이지가 query 결과에 뜨기까지 몇 초 걸릴 수 있어서 잠깐 기다렸다가 동기화
+AFTER_WRITE_DELAY_S = 3.0
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _running() -> bool:
+    return any(j.status in ("queued", "running") for j in _jobs.values())
+
+
+def _new_job() -> SyncJob:
+    job = SyncJob(id=uuid.uuid4().hex[:12], status="queued", created_at=_now())
+    _jobs[job.id] = job
+    return job
+
+
+def request_sync(settings: Settings, embedder: Embedder, store: VectorStore,
+                 delay: float = AFTER_WRITE_DELAY_S) -> None:
+    """쓰기(승인 저장) 뒤에 API 안에서 부른다 (백그라운드 스레드). 이미 돌고 있으면 끝난 뒤 한 번 더 돌게 예약.
+    전에는 봇이 HTTP로 작업을 만들고 409면 5초씩 기다리며 재시도했다."""
+    global _rerun
+    time.sleep(delay)
+    with _lock:
+        if _running():
+            _rerun = True
+            return
+        job = _new_job()
+    _run(job.id, False, settings, embedder, store)
+
+
 def _run(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore) -> None:
+    global _rerun
+    while True:
+        _run_once(job_id, force, settings, embedder, store)
+        with _lock:
+            if not _rerun:
+                return
+            _rerun, force = False, False
+            job_id = _new_job().id
+
+
+def _run_once(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore) -> None:
     job = _jobs[job_id]
     job.status = "running"
     try:
@@ -60,10 +102,10 @@ def create_sync_job(
     embedder: Embedder = Depends(get_embedder),
     store: VectorStore = Depends(get_store),
 ):
-    if any(j.status in ("queued", "running") for j in _jobs.values()):
-        raise HTTPException(status.HTTP_409_CONFLICT, "이미 진행 중인 동기화 작업이 있습니다")
-    job = SyncJob(id=uuid.uuid4().hex[:12], status="queued", created_at=_now())
-    _jobs[job.id] = job
+    with _lock:
+        if _running():
+            raise HTTPException(status.HTTP_409_CONFLICT, "이미 진행 중인 동기화 작업이 있습니다")
+        job = _new_job()
     background.add_task(_run, job.id, body.force, settings, embedder, store)
     response.headers["Location"] = f"/admin/sync-jobs/{job.id}"
     return job

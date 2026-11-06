@@ -154,14 +154,14 @@ def normalize(data: dict, max_index: int, prior: dict[str, dict] | None = None) 
 
 
 async def summarize_thread(thread_name: str, messages: list[ThreadMessage], previous: list[dict] | None = None,
-                           new_after: str | None = None) -> list[dict]:
+                           new_after: str | None = None, user: str | None = None) -> list[dict]:
     """previous: 재정리일 때 이 스레드의 현재 기록. 있으면 결정마다 relation(new/update/unchanged/reopen)이 붙는다.
     new_after: 마지막 정리 시점(ISO). 그 뒤 메시지에 [새 메시지] 표시."""
     transcript = build_transcript(messages, datetime.fromisoformat(new_after) if new_after else None)
     prompt = build_user_prompt(thread_name, transcript, format_previous(previous) if previous else None)
     try:
         # 예산 확인·사용량 기록·오류 분류는 app/llm.py가 한다 (전에는 요약만 예산 확인을 거치지 않았다)
-        resp = await get_llm().acreate("summarize", model=CLAUDE_MODEL, max_tokens=SUMMARY_MAX_TOKENS,
+        resp = await get_llm().acreate("summarize", model=CLAUDE_MODEL, user=user, max_tokens=SUMMARY_MAX_TOKENS,
                                        system=SYSTEM_PROMPT, messages=[{"role": "user", "content": prompt}])
     except LLMError as e:
         raise SummaryError(e.user_message) from e

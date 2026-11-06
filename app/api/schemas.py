@@ -1,7 +1,8 @@
 """요청/응답 스키마. FastAPI가 이걸로 검증 + /docs(Swagger) 자동 생성."""
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PolicyHit(BaseModel):
@@ -73,3 +74,79 @@ class SyncJob(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# --- 정리(요약)·승인 (A-6: 봇 → API) ---
+class ThreadMessageIn(BaseModel):
+    index: int = Field(ge=1)
+    author: str
+    created_at: datetime
+    content: str
+    jump_url: str
+    agreed_by: list[str] = []
+
+
+class SummaryCreate(BaseModel):
+    thread_id: str = Field(min_length=1, max_length=32)
+    thread_name: str
+    thread_url: str
+    messages: list[ThreadMessageIn] = Field(min_length=1, max_length=2000)
+    user_id: str | None = None   # 정리를 요청한 디스코드 사용자 ID (사용량 기록용)
+
+
+class SummaryResult(BaseModel):
+    """status: nothing_new | no_decisions | unchanged | ready. ready일 때만 summary_id·decisions가 있다."""
+    status: Literal["nothing_new", "no_decisions", "unchanged", "ready"]
+    message: str | None = None
+    summary_id: str | None = None
+    decisions: list[dict] = []
+    previous: list[dict] = []
+    unchanged: int = 0
+
+
+class DecisionIn(BaseModel):
+    """승인 화면에서 사람이 고친 결정. 노션 select 옵션에 없는 값은 저장 단계에서 400이 나므로 여기서 막는다.
+    나머지 필드(relation·prior_id·edited_fields 등)는 그대로 통과시킨다."""
+    model_config = ConfigDict(extra="allow")
+    topic: str = Field(min_length=1)
+    area: str
+    status: str
+    decision: str
+
+    @field_validator("area")
+    @classmethod
+    def _area(cls, v):
+        from app.domain import AREAS
+        if v not in AREAS:
+            raise ValueError(f"기능영역은 {AREAS} 중 하나여야 해요")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def _status(cls, v):
+        from app.domain import STATUSES
+        if v not in STATUSES:
+            raise ValueError(f"상태는 {STATUSES} 중 하나여야 해요")
+        return v
+
+
+class ApprovalCreate(BaseModel):
+    decisions: list[DecisionIn] = Field(min_length=1)
+    approved_by: str = Field(min_length=1)
+    user_id: str | None = None   # 디스코드 사용자 ID (사용량 기록용)
+
+
+class SavedDecision(BaseModel):
+    id: str
+    topic: str
+    version: int
+    updated: bool
+    reopens: str | None = None
+    notion_url: str | None = None
+    notion_error: str | None = None
+
+
+class ApprovalResult(BaseModel):
+    saved: list[SavedDecision]
+    reflect_lines: list[str] = []
+    replayed: bool = False   # True면 이미 승인된 건이라 다시 저장하지 않고 이전 결과를 돌려준 것
