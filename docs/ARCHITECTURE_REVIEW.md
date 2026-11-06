@@ -90,7 +90,7 @@
 | 무엇 | 지금 위치 | 문제 |
 |---|---|---|
 | 설정 | `config.py`(os.environ) · `app/config.py`(pydantic) · `policy_search.py`·`app/usage.py`가 `os.environ` 직접 | 같은 `.env`를 4가지 방식으로 읽음. `NOTION_SPEC_PAGES`는 두 곳에서 **다른 모양**으로 파싱, 모델명은 `CLAUDE_MODEL`/`LLM_MODEL` 두 이름. 값이 틀려도 실행 중에야 알게 됨 |
-| 노션 클라이언트 | `notion_store.py`(Async) · `notion_loader.py`(동기) · `spec_index.py`(Async, 매번 생성) | 3개. 재시도·429 처리가 어디에도 없음 |
+| 노션 클라이언트 | `notion_store.py`(Async) · `notion_loader.py`(동기) · `spec_index.py`(Async, 매번 생성) | 3개. 설정이 제각각 (정정 2026-11-06: notion-client 3.1에 429·5xx 재시도가 **내장**돼 있었음 — 429는 모두, 5xx는 GET·DELETE만. A-3에서 클라이언트 1곳으로 모으고 횟수·로거를 명시) |
 | 노션 속성 이름 | `notion_store.PROPERTIES` · `app/config.notion_prop_*` | 속성 하나 추가하면 두 곳을 고쳐야 함 |
 | LLM 호출 + 사용량 기록 | summarizer · spec_reflect · generator · reranker 각자 | 패턴이 4번 반복. "기록 안 하는 호출 금지" 원칙을 사람이 지켜야 함 |
 | usage.jsonl 쓰기 | bot · api 두 프로세스 | 프로세스 간 잠금 없음 (지금 규모에선 실질 위험 낮음) |
@@ -181,7 +181,7 @@ jsonl로 시작하는 가장 단순한 형태: 버전 줄 자체에 작업 목�
 | F1 | 노션 저장 실패 (429·5xx·타임아웃) | 보고만, 재시도 없음 | 아웃박스 재시도 + 멱등 생성 |
 | F2 | **노션 생성은 됐는데 응답 타임아웃** | (재시도가 없어서 우연히 안전) | 재시도 도입 시 반드시 "기록ID로 먼저 조회" |
 | F3 | `update_record`가 본문 블록을 지운 뒤 추가하다 실패 | 본문이 빈 페이지 | 본문은 원장에서 언제든 다시 만들 수 있음 → 같은 작업 재시도로 복구. 순서를 "새 블록 추가 → 옛 블록 삭제"로 바꾸면 빈 페이지 구간이 없어짐 |
-| F4 | 노션 대량 호출 시 429 | 처리 없음 (블록 삭제를 1개씩 호출) | 노션 클라이언트 1곳에서 `Retry-After` 존중 재시도 |
+| F4 | 노션 대량 호출 시 429 | ✅ 라이브러리 내장 재시도(`Retry-After` 존중). A-3에서 `app/notion/client.py` 한 곳에 설정(최대 3회) | — |
 | F5 | 재인덱싱 요청 실패·API 다운 | warning 로그, 다음 승인까지 누락 | **주기 동기화(예: 10분)** 추가 → 어떤 누락도 최대 10분. 해시 비교라 비용은 거의 0 |
 | F6 | 노션 로딩이 비정상적으로 적게 옴 (권한 변경, 잘못된 DB ID) | `delete_missing`이 **인덱스를 통째로 지움** | 안전장치: 살아있는 문서가 기존의 50% 미만이면 삭제 중단 + 알림 |
 | F7 | Chroma `replace_page`에서 삭제 후 추가 실패 | 그 페이지가 인덱스에서 빠짐 | 해시가 없어져 다음 동기화가 다시 넣음 → F5로 자동 복구 ✅ |

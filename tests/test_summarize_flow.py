@@ -3,7 +3,8 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import notion_store
+from app.notion import decisions as notion_decisions
+from app.notion import schema as notion_schema
 import storage
 from prompts import SYSTEM_PROMPT
 from summarizer import ThreadMessage, extract_urls, normalize
@@ -127,7 +128,7 @@ def _record(**kw) -> dict:
 
 
 def test_notion_properties_have_both_dates():
-    p = notion_store.build_properties(_record())
+    p = notion_schema.build_properties(_record())
     assert p["결정일"]["date"]["start"] == "2026-06-01T12:00:00+09:00"
     assert p["정리일"]["date"]["start"] == "2026-10-26T12:00:00+09:00"
     assert "승인일" not in p
@@ -135,19 +136,19 @@ def test_notion_properties_have_both_dates():
 
 def test_notion_properties_send_reopens_only_when_set():
     # 재논의대상 속성이 없는 옛 DB에서도 일반 저장이 되도록 값이 있을 때만 보낸다
-    assert "재논의대상" not in notion_store.build_properties(_record())
-    p = notion_store.build_properties(_record(reopens="old00001"))
+    assert "재논의대상" not in notion_schema.build_properties(_record())
+    p = notion_schema.build_properties(_record(reopens="old00001"))
     assert p["재논의대상"]["rich_text"][0]["text"]["content"] == "old00001"
 
 
 def test_notion_properties_fall_back_for_old_records():
     r = _record()
     del r["decided_at"]
-    assert notion_store.build_properties(r)["결정일"]["date"]["start"] == r["approved_at"]
+    assert notion_schema.build_properties(r)["결정일"]["date"]["start"] == r["approved_at"]
 
 
 def test_notion_body_has_linked_excerpts():
-    blocks = notion_store.build_children(_record())
+    blocks = notion_decisions.build_children(_record())
     bullet = blocks[-1]["bulleted_list_item"]["rich_text"][0]
     assert bullet["text"]["content"] == "A (06-01 12:00): 원문"
     assert bullet["text"]["link"] == {"url": "https://d/1"}

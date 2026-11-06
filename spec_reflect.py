@@ -23,7 +23,7 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
-import notion_store
+from app.notion import client as notion
 from app import usage as usage_log
 from app.rag.spec_loader import SpecDocument, SpecEntry, load_spec
 from config import (ANTHROPIC_API_KEY, DATA_DIR, KST, NOTION_PM_USER_IDS, NOTION_SPEC_INBOX_PAGE, NOTION_SPEC_PAGES,
@@ -287,7 +287,7 @@ async def _inbox_has(client, page_id: str, record: dict) -> bool:
 
 
 async def add_to_inbox(client, record: dict, proposal: str | None, notion_url: str | None, note: str | None) -> Outcome:
-    page_id = notion_store.extract_id(NOTION_SPEC_INBOX_PAGE)
+    page_id = notion.notion_id(NOTION_SPEC_INBOX_PAGE)
     out = Outcome(record["id"], record["topic"], "inbox", note=note)
     base = f"https://www.notion.so/{page_id}"
     if await _inbox_has(client, page_id, record):
@@ -319,9 +319,9 @@ def _log_outcomes(outcomes: list[Outcome], records: dict[str, dict], doc: SpecDo
 
 async def reflect_records(saved: list[tuple[dict, str | None]], user: str | None = None) -> list[Outcome]:
     """saved: [(record, 노션 결정 기록 URL)]. 대상 상태의 결정을 정책서에 반영 제안하고, 맞는 정책서가 없으면 미분류 페이지로."""
-    if not (notion_store.enabled() and (NOTION_SPEC_PAGES or NOTION_SPEC_INBOX_PAGE)):
+    if not (notion.enabled() and (NOTION_SPEC_PAGES or NOTION_SPEC_INBOX_PAGE)):
         return []
-    client = notion_store.get_client()
+    client = notion.get_async_client()
     outcomes: list[Outcome] = []
     direct: list[Outcome] = []  # 정책서 없이 바로 미분류로 간 것 (정책서별 로그와 따로 기록)
     by_page: dict[str, list[tuple[dict, str | None]]] = {}
@@ -331,7 +331,7 @@ async def reflect_records(saved: list[tuple[dict, str | None]], user: str | None
         if record["status"] not in SPEC_REFLECT_STATUSES:
             outcomes.append(Outcome(record["id"], record["topic"], "skipped", note=f"{record['status']}은 반영 제안 안 함"))
         elif page:
-            by_page.setdefault(notion_store.extract_id(page), []).append((record, url))
+            by_page.setdefault(notion.notion_id(page), []).append((record, url))
         elif NOTION_SPEC_INBOX_PAGE:  # 정책서 자체가 없음 → 매칭 없이 미분류로
             direct.append(await _safe_inbox(client, record, None, url, f"'{record['area']}' 정책서 없음"))
             outcomes.append(direct[-1])

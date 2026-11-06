@@ -57,8 +57,8 @@ def spec_documents(doc: SpecDocument, areas: list[str]) -> list[PolicyDocument]:
 
 
 async def _load_all(settings: Settings) -> list[PolicyDocument]:
-    from notion_client import AsyncClient
-    client = AsyncClient(auth=settings.notion_token)
+    from app.notion.client import new_async_client
+    client = new_async_client(settings.notion_token)  # asyncio.run마다 새 루프라 공용 클라이언트를 쓰지 않는다
     docs: list[PolicyDocument] = []
     for page_id, areas in settings.spec_pages().items():
         spec = await load_spec(client, page_id, f"{settings.data_dir}/spec")

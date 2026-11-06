@@ -12,7 +12,8 @@ import asyncio
 import re
 from pathlib import Path
 
-import notion_store
+from app.notion.client import notion_id
+from app.notion.decisions import NotionDecisionRepository, create_database
 from config import NOTION_DATA_SOURCE_ID, NOTION_PARENT_PAGE_ID, NOTION_TOKEN
 
 ENV_PATH = Path(".env")
@@ -34,15 +35,15 @@ async def main() -> None:
         raise SystemExit(".env에 NOTION_TOKEN을 넣어 주세요.")
     if NOTION_DATA_SOURCE_ID:
         # 이미 만든 DB: 새로 생긴 속성만 추가한다 (예: 재논의대상). 새 DB가 필요하면 .env에서 그 줄을 지우고 다시 실행
-        added = await notion_store.ensure_schema()
+        added = await NotionDecisionRepository().ensure_schema()
         print(f"✅ 속성 추가: {', '.join(added)}" if added else "✅ 스키마가 최신이에요. 추가할 속성이 없어요.")
         return
     if not NOTION_PARENT_PAGE_ID:
         raise SystemExit(".env에 NOTION_PARENT_PAGE_ID(DB를 넣을 페이지 URL 또는 ID)를 넣어 주세요.")
 
-    parent_id = notion_store.extract_id(NOTION_PARENT_PAGE_ID)
+    parent_id = notion_id(NOTION_PARENT_PAGE_ID)
     try:
-        info = await notion_store.create_database(parent_id)
+        info = await create_database(parent_id)
     except Exception as e:
         msg = str(e)
         if "Could not find" in msg or "object_not_found" in msg:

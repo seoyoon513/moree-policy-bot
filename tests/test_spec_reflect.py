@@ -234,8 +234,8 @@ def test_unknown_comments_on_page_and_same_does_nothing():
 def test_reflect_skips_non_final_and_unconfigured_areas(monkeypatch):
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_PAGES", {"북마크": "0" * 32})
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_INBOX_PAGE", "")  # 미분류 페이지가 없으면 건너뜀으로 보고
-    monkeypatch.setattr(spec_reflect.notion_store, "enabled", lambda: True)
-    monkeypatch.setattr(spec_reflect.notion_store, "get_client", lambda: FakeNotion())
+    monkeypatch.setattr(spec_reflect.notion, "enabled", lambda: True)
+    monkeypatch.setattr(spec_reflect.notion, "get_async_client", lambda: FakeNotion())
 
     async def fake_load(client, page_id, cache_dir):
         return sample_doc()
@@ -256,8 +256,8 @@ def test_reflect_skips_non_final_and_unconfigured_areas(monkeypatch):
 def test_reflect_falls_back_to_default_spec(monkeypatch):
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_PAGES", {"*": "0" * 32})
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_INBOX_PAGE", "")
-    monkeypatch.setattr(spec_reflect.notion_store, "enabled", lambda: True)
-    monkeypatch.setattr(spec_reflect.notion_store, "get_client", lambda: FakeNotion())
+    monkeypatch.setattr(spec_reflect.notion, "enabled", lambda: True)
+    monkeypatch.setattr(spec_reflect.notion, "get_async_client", lambda: FakeNotion())
     seen = []
 
     async def fake_load(client, page_id, cache_dir):
@@ -281,8 +281,8 @@ def _patch_reflect(monkeypatch, pages: dict, action: str, fake: FakeNotion):
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_PAGES", pages)
     monkeypatch.setattr(spec_reflect, "NOTION_SPEC_INBOX_PAGE", INBOX)
     monkeypatch.setattr(spec_reflect, "NOTION_PM_USER_IDS", [])
-    monkeypatch.setattr(spec_reflect.notion_store, "enabled", lambda: True)
-    monkeypatch.setattr(spec_reflect.notion_store, "get_client", lambda: fake)
+    monkeypatch.setattr(spec_reflect.notion, "enabled", lambda: True)
+    monkeypatch.setattr(spec_reflect.notion, "get_async_client", lambda: fake)
 
     async def fake_load(client, page_id, cache_dir):
         return sample_doc()

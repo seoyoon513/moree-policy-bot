@@ -40,20 +40,12 @@ class Settings(BaseSettings):
     rag_source: str = "auto"
     data_dir: str = "data"
 
-    # --- Notion (봇의 notion_store.py 스키마와 동일) ---
+    # --- Notion (속성 이름·타입은 app/notion/schema.py) ---
     # NOTION_DATA_SOURCE_ID가 비어 있으면 봇은 로컬 JSON에만 저장
     notion_token: str = ""
     notion_data_source_id: str = ""
     notion_database_id: str = ""
     notion_parent_page_id: str = ""   # setup_notion.py · setup_spec_inbox.py에서만 사용
-    notion_prop_title: str = "주제"
-    notion_prop_area: str = "기능영역"
-    notion_prop_status: str = "상태"
-    notion_prop_decider: str = "결정자"
-    notion_prop_decided_at: str = "결정일"
-    notion_prop_scope: str = "적용범위"
-    # 본문으로 쓸 속성들 (순서대로 "라벨: 값" 형태로 이어붙임)
-    notion_body_props: list[str] = ["결정", "근거", "적용범위", "외부참조", "확인필요", "스레드명"]
 
     # --- 정책서 인덱싱 (EXPERIMENTS 4-1) ---
     # 봇의 NOTION_SPEC_PAGES와 같은 값: "북마크=<페이지 URL/ID>,리뷰=<...>" ("*"는 기본 정책서). 비우면 결정 DB만 인덱싱
@@ -189,7 +181,7 @@ class Settings(BaseSettings):
     def spec_pages(self) -> dict[str, list[str]]:
         """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 (검색 인덱스용, "*"는 기본 정책서라 영역에서 뺀다).
         같은 NOTION_SPEC_PAGES 값을 spec_pages_by_area()와 반대 방향으로 본 것."""
-        from app.rag.spec_loader import notion_id
+        from app.notion.client import notion_id
         out: dict[str, list[str]] = {}
         for area, page in self.spec_pages_by_area().items():
             areas = out.setdefault(notion_id(page), [])

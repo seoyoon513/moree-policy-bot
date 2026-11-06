@@ -53,16 +53,8 @@ def parse_links(path: str) -> list[tuple[int, int]]:
 
 
 def already_saved_thread_ids() -> set[str]:
-    p = Path(DATA_DIR) / "history.jsonl"
-    if not p.exists():
-        return set()
-    ids = set()
-    for line in p.read_text(encoding="utf-8").splitlines():
-        try:
-            ids.add(str(json.loads(line)["source"]["thread_id"]))
-        except (ValueError, KeyError, TypeError):
-            pass
-    return ids
+    from app.ledger import Ledger
+    return Ledger(DATA_DIR).thread_ids()
 
 
 async def expand_channel(client: discord.Client, guild_id: int, ch) -> list[discord.Thread]:

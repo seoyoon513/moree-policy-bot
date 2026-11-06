@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-import notion_store
+from app.notion.decisions import NotionDecisionRepository, history_blocks
 import spec_reflect
 import storage
 from prompts import build_user_prompt, format_previous
@@ -30,7 +30,7 @@ def _decision(**kw) -> dict:
 @pytest.fixture
 def tmp_store(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(storage.notion_store, "enabled", lambda: False)
+    monkeypatch.setattr(storage, "get_decision_repository", lambda: None)  # 노션 없이 로컬 원장만
     return tmp_path
 
 
@@ -150,14 +150,14 @@ def _record(**kw) -> dict:
 
 def test_update_record_rewrites_page_with_history(monkeypatch):
     fake = FakeNotion()
-    monkeypatch.setattr(notion_store, "get_client", lambda: fake)
+    repo = NotionDecisionRepository(client=fake, data_source_id="ds")  # 가짜 클라이언트를 주입 (monkeypatch 대신)
 
     async def page(record_id):
         return {"id": "page-1", "url": "https://notion.so/page-1"}
 
-    monkeypatch.setattr(notion_store, "find_record_page", page)
+    monkeypatch.setattr(repo, "find_page", page)
     v1 = _record(version=1, decision="A", approved_by="승인자1", approved_at="2026-06-01T11:00:00+09:00")
-    url = asyncio.run(notion_store.update_record(_record(), [v1]))
+    url = asyncio.run(repo.update(_record(), [v1]))
     kinds = [k for k, _ in fake.calls]
     assert url == "https://notion.so/page-1" and kinds == ["update", "delete", "delete", "append"]
     assert fake.calls[0][1]["properties"]["결정"]["rich_text"][0]["text"]["content"] == "A+B"
@@ -170,10 +170,10 @@ def test_update_record_rewrites_page_with_history(monkeypatch):
 
 
 def test_history_blocks_newest_first():
-    blocks = notion_store.history_blocks([_record(version=1, decision="A"), _record(version=2, decision="B")])
+    blocks = history_blocks([_record(version=1, decision="A"), _record(version=2, decision="B")])
     titles = [b["toggle"]["rich_text"][0]["text"]["content"] for b in blocks if b["type"] == "toggle"]
     assert titles[0].startswith("v2") and titles[1].startswith("v1")
-    assert notion_store.history_blocks([]) == []
+    assert history_blocks([]) == []
 
 
 # --- 승인 화면 ---

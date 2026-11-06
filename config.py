@@ -4,9 +4,9 @@
 여기서는 기존 코드의 `from config import X`가 그대로 동작하도록 같은 이름으로 다시 내보내기만 한다.
 새 설정은 app/config.py의 Settings에 필드로 추가한다.
 """
-from zoneinfo import ZoneInfo
-
 from app.config import get_settings
+# 도메인 상수 (환경변수가 아님) — 정의는 app/domain.py
+from app.domain import AGREE_EMOJIS, AREAS, KST, STATUSES  # noqa: F401
 
 _s = get_settings()
 
@@ -36,26 +36,3 @@ MAX_MESSAGES = _s.max_messages
 MAX_TRANSCRIPT_CHARS = _s.max_transcript_chars
 SUMMARY_MAX_TOKENS = _s.summary_max_tokens
 APPROVAL_TIMEOUT = _s.approval_timeout
-
-# --- 도메인 상수 (환경변수가 아님) ---
-KST = ZoneInfo("Asia/Seoul")
-
-# 동의로 인정하는 리액션. 작성자가 아닌 사람이 남기면 대화록에 [동의 리액션: 이름]으로 표시 → 확정 신호
-AGREE_EMOJIS = {"👍", "✅", "👌", "🙆", "🙆‍♀️", "🙆‍♂️", "⭕", "💯", "🆗"}
-
-# 기능 영역(폴더). 문서 구조가 바뀌면 여기만 수정. (Notion select 옵션이라 쉼표 금지)
-AREAS = [
-    "회원가입·온보딩",
-    "지도·탐색",
-    "행사 상세",
-    "행사 등록",
-    "리뷰",
-    "알림",
-    "도감·발도장",
-    "북마크",
-    "계정·프로필",   # 로그인 외 계정 관리, 탈퇴, 프로필·공유
-    "앱 공통",       # 업데이트 팝업, 공통 컴포넌트 등 특정 화면에 속하지 않는 것
-    "기타",
-]
-
-STATUSES = ["제안", "논의중", "최종결정"]

@@ -41,7 +41,7 @@ NOTION_PAGE = {
 
 
 def test_notion_page_to_document_uses_bot_schema():
-    d = page_to_document(NOTION_PAGE, Settings())
+    d = page_to_document(NOTION_PAGE)
     assert d.title == "리뷰 작성 조건"
     assert d.metadata["area"] == "리뷰" and d.metadata["status"] == "논의중"
     assert d.metadata["decided_at"] == "2026-10-11"
@@ -53,7 +53,7 @@ def test_notion_page_to_document_uses_bot_schema():
 def test_notion_page_without_decided_at_uses_old_approved_date():
     page = {**NOTION_PAGE, "properties": {k: v for k, v in NOTION_PAGE["properties"].items() if k != "결정일"}}
     page["properties"]["승인일"] = {"type": "date", "date": {"start": "2026-09-01T09:00:00+09:00"}}
-    assert page_to_document(page, Settings()).metadata["decided_at"] == "2026-09-01"
+    assert page_to_document(page).metadata["decided_at"] == "2026-09-01"
 
 
 def test_jsonl_loader_reads_bot_history(tmp_path):

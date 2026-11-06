@@ -9,7 +9,7 @@
 import argparse
 import asyncio
 
-import notion_store
+from app.notion.decisions import NotionDecisionRepository
 from spec_reflect import format_outcomes, reflect_records
 from storage import current_records
 
@@ -21,7 +21,8 @@ def load(records: list[str], approved_by: str | None) -> list[dict]:
 
 
 async def run(recs: list[dict]) -> None:
-    saved = [(r, await notion_store.find_record_url(r["id"])) for r in recs]
+    repo = NotionDecisionRepository()
+    saved = [(r, await repo.find_url(r["id"])) for r in recs]
     for line in format_outcomes(await reflect_records(saved, user="reflect_saved")):
         print(line)
 

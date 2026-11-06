@@ -62,8 +62,7 @@ flowchart LR
 ├── summarizer.py        # 스레드 → 정책 결정 요약 (Claude), 재정리 시 new/update/unchanged 판정
 ├── prompts.py           # 요약·정책서 매칭 프롬프트 / 출력 스키마
 ├── views.py             # 승인 화면(결정별 수정·제외·연결 해제), 승인 후 재인덱싱·정책서 반영 호출
-├── storage.py           # 로컬 JSON(append-only 버전) + Notion 저장
-├── notion_store.py      # Notion DB 스키마, 저장·갱신, 변경 이력 본문
+├── storage.py           # 승인 저장 흐름: 원장(history.jsonl) → 결정 기록 저장소(노션)
 ├── spec_reflect.py      # 승인된 결정 → 정책서 매칭 → 댓글·콜아웃·미분류 페이지 반영 제안
 ├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
 ├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
@@ -71,6 +70,9 @@ flowchart LR
 ├── config.py            # 봇용 설정 이름표(app/config.py 값을 다시 내보냄) + 기능영역·상태 상수
 ├── app/
 │   ├── config.py        # 설정 단일 출처 Settings (봇·API·스크립트 공용, .env/환경변수)
+│   ├── domain.py        # 기능영역·상태 등 도메인 상수
+│   ├── ledger.py        # 결정 원장 data/history.jsonl 읽기·쓰기 (버전, 깨진 줄 건너뛰기, fsync)
+│   ├── notion/          # 노션 접근은 여기만: client(재시도·로그) · schema(속성 이름, 쓰기·읽기 공용) · decisions(저장소)
 │   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
 │   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
 │   ├── logging_setup.py # 로그 설정 한 곳 (text/json, request_id)

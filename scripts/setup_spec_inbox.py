@@ -7,7 +7,7 @@
 """
 import asyncio
 
-import notion_store
+from app.notion import client as notion
 from config import NOTION_PARENT_PAGE_ID, NOTION_SPEC_INBOX_PAGE
 from setup_notion import update_env
 
@@ -21,8 +21,8 @@ async def main() -> None:
         raise SystemExit("이미 NOTION_SPEC_INBOX_PAGE가 있어요. 새로 만들려면 .env에서 그 줄을 지우고 다시 실행하세요.")
     if not NOTION_PARENT_PAGE_ID:
         raise SystemExit(".env에 NOTION_PARENT_PAGE_ID가 필요해요.")
-    page = await notion_store.get_client().pages.create(
-        parent={"page_id": notion_store.extract_id(NOTION_PARENT_PAGE_ID)},
+    page = await notion.get_async_client().pages.create(
+        parent={"page_id": notion.notion_id(NOTION_PARENT_PAGE_ID)},
         icon={"type": "emoji", "emoji": "📥"},
         properties={"title": {"title": [{"type": "text", "text": {"content": TITLE}}]}},
         children=[{"type": "callout", "callout": {"rich_text": [{"type": "text", "text": {"content": GUIDE}}],

@@ -9,7 +9,7 @@ import json
 
 from app.rag.spec_loader import entry_dict, load_spec
 from config import DATA_DIR, NOTION_SPEC_PAGES
-from notion_store import extract_id, get_client
+from app.notion.client import get_async_client as get_client, notion_id as extract_id
 
 
 async def dump(page_ids: list[str], as_json: bool) -> None:

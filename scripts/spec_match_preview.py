@@ -11,7 +11,7 @@ import asyncio
 import json
 from pathlib import Path
 
-import notion_store
+from app.notion import client as notion
 from app.rag.spec_loader import load_spec
 from config import DATA_DIR, NOTION_SPEC_PAGES, SPEC_REFLECT_STATUSES
 from spec_reflect import match_records
@@ -44,10 +44,10 @@ async def preview(records: list[dict]) -> None:
     for r in records:
         page = NOTION_SPEC_PAGES.get(r["area"]) or NOTION_SPEC_PAGES.get("*")
         if page:
-            by_page.setdefault(notion_store.extract_id(page), []).append(r)
+            by_page.setdefault(notion.notion_id(page), []).append(r)
     scored = correct = 0
     for page_id, recs in by_page.items():
-        doc = await load_spec(notion_store.get_client(), page_id, Path(DATA_DIR) / "spec")
+        doc = await load_spec(notion.get_async_client(), page_id, Path(DATA_DIR) / "spec")
         print(f"# {doc.title} — 결정 {len(recs)}건")
         for r, m in zip(recs, await match_records(doc, recs, user="preview")):
             label = labels.get(r["id"])

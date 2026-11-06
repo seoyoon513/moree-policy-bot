@@ -7,64 +7,39 @@
 봇은 결정 1건 = 페이지 1개로 저장하고, 결정/근거 등 핵심 내용을 '속성'에 넣는다.
 그래서 본문 블록을 따로 읽지 않고 속성만으로 문서를 만든다 → 페이지당 API 호출 0회 추가.
 """
-import json
-from pathlib import Path
-
-from notion_client import Client
-
 from app.config import Settings
+from app.ledger import Ledger
+from app.notion import schema as ns
+from app.notion.client import new_sync_client
+from app.notion.schema import prop_to_str  # noqa: F401  (예전 import 경로 유지)
 from app.rag.models import PolicyDocument
-
-
-def _rich_text_to_str(rich: list[dict]) -> str:
-    return "".join(r.get("plain_text") or r.get("text", {}).get("content", "") for r in rich)
-
-
-def prop_to_str(prop: dict | None) -> str:
-    """Notion 속성 타입별로 사람이 읽을 수 있는 문자열로 변환."""
-    if not prop:
-        return ""
-    t = prop.get("type")
-    v = prop.get(t)
-    if t in ("title", "rich_text"):
-        return _rich_text_to_str(v or [])
-    if t in ("select", "status"):
-        return (v or {}).get("name", "")
-    if t == "multi_select":
-        return ", ".join(o["name"] for o in v or [])
-    if t == "date":
-        return (v or {}).get("start", "") or ""
-    if t == "people":
-        return ", ".join(p.get("name", "") for p in v or [])
-    if t in ("created_time", "last_edited_time", "url"):
-        return v or ""
-    return ""
 
 
 def _body_from_fields(fields: list[tuple[str, str]]) -> str:
     return "\n".join(f"{label}: {value}" for label, value in fields if value and value.strip())
 
 
-def page_to_document(page: dict, s: Settings) -> PolicyDocument:
+def page_to_document(page: dict) -> PolicyDocument:
+    """속성 이름은 app/notion/schema.py — 봇이 저장할 때 쓰는 이름과 같은 이름표."""
     props = page["properties"]
     p = lambda name: prop_to_str(props.get(name))
     return PolicyDocument(
         page_id=page["id"],
-        title=p(s.notion_prop_title) or "(제목 없음)",
+        title=p(ns.TITLE) or "(제목 없음)",
         url=page.get("url", ""),
-        body=_body_from_fields([(name, p(name)) for name in s.notion_body_props]),
+        body=_body_from_fields([(name, p(name)) for name in ns.BODY_PROPS]),
         metadata={
-            "area": p(s.notion_prop_area),
-            "status": p(s.notion_prop_status),
-            "decider": p(s.notion_prop_decider),
+            "area": p(ns.AREA),
+            "status": p(ns.STATUS),
+            "decider": p(ns.DECIDER),
             # '결정일'이 생기기 전 페이지는 비어 있으니 옛 '승인일'로 대신한다
-            "decided_at": (p(s.notion_prop_decided_at) or p("승인일"))[:10],
-            "scope": p(s.notion_prop_scope),
-            "thread_url": p("스레드"),
+            "decided_at": (p(ns.DECIDED_AT) or p(ns.LEGACY_APPROVED_AT))[:10],
+            "scope": p(ns.SCOPE),
+            "thread_url": p(ns.THREAD_URL),
             "last_edited": page.get("last_edited_time", ""),
             # 재논의 짝을 찾는 키: 재논의 기록은 reopens = 이전 최종결정의 record_id
-            "record_id": p("기록ID"),
-            "reopens": p("재논의대상"),
+            "record_id": p(ns.RECORD_ID),
+            "reopens": p(ns.REOPENS),
         },
     )
 
@@ -72,7 +47,7 @@ def page_to_document(page: dict, s: Settings) -> PolicyDocument:
 class NotionLoader:
     def __init__(self, settings: Settings):
         self.s = settings
-        self.client = Client(auth=settings.notion_token)  # 기본 API 버전 = data source 기반
+        self.client = new_sync_client(settings.notion_token)  # 재시도·로그 설정은 app/notion/client.py
 
     def _iter_pages(self):
         cursor = None
@@ -89,14 +64,12 @@ class NotionLoader:
             cursor = res["next_cursor"]
 
     def load(self) -> list[PolicyDocument]:
-        return [page_to_document(page, self.s) for page in self._iter_pages()]
+        return [page_to_document(page) for page in self._iter_pages()]
 
 
 def record_to_document(r: dict) -> PolicyDocument:
     """storage.py가 만든 record(dict) → PolicyDocument."""
-    questions = "\n".join(
-        f"• {q['question']}" + (f" → {q['ask_to']}" if q.get("ask_to") else "") for q in r.get("open_questions") or []
-    )
+    questions = ns.questions_text(r.get("open_questions") or [])
     src = r.get("source") or {}
     body = _body_from_fields([
         ("결정", r.get("decision", "")),
@@ -129,17 +102,11 @@ def record_to_document(r: dict) -> PolicyDocument:
 
 class JsonlLoader:
     def __init__(self, settings: Settings):
-        self.path = Path(settings.data_dir) / "history.jsonl"
+        self.ledger = Ledger(settings.data_dir)
 
     def load(self) -> list[PolicyDocument]:
-        if not self.path.exists():
-            return []
-        docs: dict[str, PolicyDocument] = {}
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                d = record_to_document(json.loads(line))
-                docs[d.page_id] = d  # 같은 id가 두 번 있으면 뒤의 것 사용
-        return list(docs.values())
+        """각 기록의 현재 버전만. 깨진 줄은 원장이 건너뛴다 (전에는 예외로 인덱싱 전체가 실패)."""
+        return [record_to_document(r) for r in self.ledger.current()]
 
 
 def build_loader(settings: Settings):

@@ -14,6 +14,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from app.notion.client import notion_id  # noqa: F401  (예전 import 경로 유지)
+
 POLICY_ID_RE = re.compile(r"^[A-Z]{2,4}-\d{2}(?:-\d{2})?$")
 SCREEN_HEADING_RE = re.compile(r"^\s*([A-Z]{2,4}-\d{2})\b")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
@@ -56,19 +58,6 @@ class SpecDocument:
         """새 정책 콜아웃을 넣을 위치: 그 화면의 마지막 ID 표."""
         found = [e for e in self.entries if e.screen_id == screen_id and e.policy_id]
         return found[-1] if found else None
-
-
-def notion_id(value: str) -> str:
-    """페이지 URL이나 ID 문자열에서 32자리 ID를 뽑는다 (봇의 notion_store.extract_id도 이걸 쓴다)."""
-    path = value.split("?")[0].split("#")[0]
-    uuid_form = re.findall(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", path)
-    if uuid_form:
-        return uuid_form[-1].replace("-", "")
-    # 'Moree-1a2b...' 처럼 제목 뒤에 붙은 32자리: 앞이 hex가 아닌 위치에서만 매칭
-    found = re.findall(r"(?<![0-9a-fA-F])([0-9a-fA-F]{32})(?![0-9a-fA-F])", path)
-    if not found:
-        raise ValueError(f"Notion ID를 찾을 수 없어요: {value}")
-    return found[-1]
 
 
 def plain(rich: list[dict]) -> str:

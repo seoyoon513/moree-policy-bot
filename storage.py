@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-import notion_store
+from app.ledger import Ledger
+from app.notion.decisions import DecisionRepository, get_decision_repository
 from config import DATA_DIR, KST
 from summarizer import ThreadMessage
 
@@ -92,28 +93,19 @@ def _build_record(d: dict, source: dict, approved_by: str, now: datetime, prior:
 
 # --- 버전 (재정리·갱신) ---
 # history.jsonl은 append-only. 같은 기록 ID가 여러 줄이면 버전이고, 마지막 줄이 현재 버전이다.
+def ledger() -> Ledger:
+    """원장 읽기·쓰기는 app.ledger 한 곳 (DATA_DIR은 호출할 때 읽는다: 테스트가 바꿔 끼울 수 있게)."""
+    return Ledger(DATA_DIR)
+
+
 def load_versions() -> dict[str, list[dict]]:
     """기록 ID → 버전 목록 (오래된 순)."""
-    path = Path(DATA_DIR) / "history.jsonl"
-    out: dict[str, list[dict]] = {}
-    if not path.exists():
-        return out
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            r = json.loads(line)
-        except ValueError:
-            continue
-        if r.get("id"):
-            out.setdefault(r["id"], []).append(r)
-    return out
+    return ledger().versions()
 
 
 def current_records(thread_id: str | None = None) -> list[dict]:
     """각 기록의 현재 버전. thread_id를 주면 그 스레드 것만."""
-    latest = [vs[-1] for vs in load_versions().values()]
-    if thread_id is not None:
-        latest = [r for r in latest if str((r.get("source") or {}).get("thread_id")) == str(thread_id)]
-    return latest
+    return ledger().current(thread_id)
 
 
 def summarized_until(records: list[dict]) -> str | None:
@@ -163,24 +155,30 @@ def thread_source(thread_id: str, thread_name: str, thread_url: str, messages: l
 
 
 def _write_local(record: dict, now: datetime) -> Path:
-    base = Path(DATA_DIR)
-    folder = base / "decisions" / _safe_dirname(record["area"])
+    """원장 줄이 먼저(= 승인의 기준), 사람이 보기 위한 결정별 json 사본은 그다음 (원장에서 다시 만들 수 있다)."""
+    ledger().append(record)
+    folder = Path(DATA_DIR) / "decisions" / _safe_dirname(record["area"])
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{now.strftime('%Y%m%d-%H%M%S')}_{record['id']}.json"
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    with (base / "history.jsonl").open("a", encoding="utf-8") as hf:
-        hf.write(json.dumps(record, ensure_ascii=False) + "\n")
     return path
 
 
-async def save_decisions(decisions: list[dict], *, source: dict, approved_by: str) -> list[SaveResult]:
+_DEFAULT = object()
+
+
+async def save_decisions(decisions: list[dict], *, source: dict, approved_by: str,
+                         repo: DecisionRepository | None = _DEFAULT) -> list[SaveResult]:
     """source["messages_by_index"]: messages_by_index()의 결과. 결정일 계산과 근거 발췌에 쓴다.
 
     결정의 relation에 따라
     - update: 이전 기록을 덮어쓴다 (같은 ID, version+1). 노션은 속성 갱신 + 본문 '변경 이력'에 이전 버전들
     - reopen·new: 새 기록. reopen은 이전 최종결정을 덮지 않고 reopens로 연결만
     - unchanged는 호출하는 쪽에서 빼고 넘긴다
+    repo: 결정 기록 원본 저장소. 생략하면 설정대로(노션 또는 None), None이면 로컬 원장에만 저장.
     """
+    if repo is _DEFAULT:
+        repo = get_decision_repository()
     now = datetime.now(KST)
     versions = load_versions()
     results = []
@@ -188,12 +186,12 @@ async def save_decisions(decisions: list[dict], *, source: dict, approved_by: st
         history = versions.get(d.get("prior_id") or "") if d.get("relation") == "update" else None
         record = _build_record(d, source, approved_by, now, prior=history[-1] if history else None)
         result = SaveResult(record=record, path=_write_local(record, now), previous=history or [])
-        if notion_store.enabled():
+        if repo is not None:
             try:
                 if history:
-                    result.notion_url = await notion_store.update_record(record, history)
+                    result.notion_url = await repo.update(record, history)
                 else:
-                    result.notion_url = await notion_store.save_record(record)
+                    result.notion_url = await repo.add(record)
             except Exception as e:  # 로컬은 저장됐으니 Notion 실패만 보고
                 log.exception("Notion 저장 실패 (id=%s)", record["id"])
                 result.notion_error = str(e)[:300]
