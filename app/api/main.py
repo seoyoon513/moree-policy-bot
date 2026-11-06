@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 
 from app.api.deps import get_store
-from app.api.routers import policies, summaries, sync, usage
+from app.api.routers import policies, reconciliation, summaries, sync, usage
 from app import ops
 from app.config import Settings, get_settings
 from app.logging_setup import new_request_id, set_request_id, setup_logging
@@ -81,6 +81,7 @@ app.include_router(policies.router)
 app.include_router(summaries.router)
 app.include_router(sync.router)
 app.include_router(usage.router)
+app.include_router(reconciliation.router)
 
 
 @app.get("/health", tags=["ops"], summary="헬스체크: 응답하면 200, 내용(status)은 ok | degraded")

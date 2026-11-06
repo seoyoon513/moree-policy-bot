@@ -15,9 +15,22 @@ from typing import Protocol
 
 from app.config import Settings, get_settings
 from app.notion import client as notion
-from app.notion.schema import APPROVED_AT, DB_TITLE, PROPERTIES, RECORD_ID, build_properties, prop_to_str, rich_text
+from app.notion.schema import (APPROVED_AT, AREA, DB_TITLE, DECISION, PROPERTIES, RECORD_ID, STATUS, TITLE,
+                               build_properties, prop_to_str, rich_text)
 
 log = logging.getLogger("policy-notion")
+
+# 완료 표시로 같이 비교하는 속성 (노션 속성 이름, 기록 필드)
+MARKER_FIELDS = [(TITLE, "topic"), (AREA, "area"), (STATUS, "status"), (DECISION, "decision")]
+
+
+def same_minute(a: str, b: str) -> bool:
+    """두 ISO 시각이 같은 분인가 (노션 날짜는 분 단위). 시간대가 달라도 같은 순간이면 같다."""
+    try:
+        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+    except (TypeError, ValueError):
+        return False
+    return da.replace(second=0, microsecond=0) == db.replace(second=0, microsecond=0)
 
 
 class DecisionRepository(Protocol):
@@ -111,17 +124,19 @@ class NotionDecisionRepository:
         return self._client or notion.get_async_client()
 
     # --- 멱등 쓰기 (A-5b): 같은 작업을 몇 번 다시 실행해도 결과가 같다 ---
-    # 완료 표시 = 페이지의 '정리일' 속성이 이 버전의 승인 시각과 같음. 버전마다 승인 시각(초)이 달라서 버전을 구분한다.
-    # 속성은 항상 **마지막에** 쓰므로, 정리일이 같으면 그 버전의 본문까지 다 쓴 것이다 (DB 구조 변경 없이).
+    # 완료 표시 = 페이지의 '정리일'이 이 버전의 승인 시각과 **같은 분**이고, 주제·영역·상태·결정이 이 버전과 같음.
+    # 속성은 항상 **마지막에** 쓰므로, 이게 맞으면 그 버전의 본문까지 다 쓴 것이다 (DB 구조 변경 없이).
+    # ⚠️ 노션 날짜는 분 단위로 저장된다 (13:10:05 → 13:10:00, 실측 2026-11-06). 초까지 비교하면 항상 '안 씀'으로 보인다
+    #    — S-1의 last_edited와 같은 함정. 같은 분 안의 다른 버전은 내용 비교로 구분한다.
 
     @staticmethod
     def is_written(page: dict, record: dict) -> bool:
-        """이 페이지에 이 버전이 이미 다 써졌나 (노션은 '…:06.000+09:00'처럼 돌려줘서 시각으로 비교한다)."""
-        got = prop_to_str((page.get("properties") or {}).get(APPROVED_AT))
-        try:
-            return bool(got) and datetime.fromisoformat(got) == datetime.fromisoformat(record["approved_at"])
-        except ValueError:
+        """이 페이지에 이 버전이 이미 다 써졌나."""
+        props = page.get("properties") or {}
+        if not same_minute(prop_to_str(props.get(APPROVED_AT)), record.get("approved_at", "")):
             return False
+        return all(prop_to_str(props.get(prop)).strip() == (record.get(field) or "").strip()
+                   for prop, field in MARKER_FIELDS)
 
     async def add(self, record: dict) -> str:
         """결정 1건을 페이지로 추가하고 URL을 돌려준다.

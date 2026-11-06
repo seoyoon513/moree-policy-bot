@@ -44,8 +44,8 @@ class FakeNotion:
                 val = v[t]
                 if t in ("title", "rich_text"):
                     val = [{"plain_text": x["text"]["content"]} for x in val]
-                if t == "date" and val:
-                    val = {"start": val["start"].replace("+09:00", ".000+09:00")}  # 노션은 밀리초를 붙인다
+                if t == "date" and val:  # 노션은 분 단위로 저장하고 밀리초를 붙여 돌려준다 (13:10:05 → 13:10:00.000)
+                    val = {"start": val["start"][:16] + ":00.000" + val["start"][19:]}
                 out[k] = {"type": t, t: val}
             return out
 
@@ -160,10 +160,17 @@ def test_update_interrupted_mid_delete_then_retry_ends_clean():
     assert len(page["blocks"]) == expected
 
 
-def test_marker_compares_times_not_strings():
-    page = {"properties": {APPROVED_AT: {"type": "date", "date": {"start": "2026-06-02T11:00:00.000+09:00"}}}}
-    assert NotionDecisionRepository.is_written(page, _record())
-    assert not NotionDecisionRepository.is_written(page, _record(approved_at="2026-06-02T11:00:01+09:00"))
+def test_marker_is_minute_precision_plus_content():
+    fake = FakeNotion()
+    repo = _repo(fake)
+    run(repo.add(_record(approved_at="2026-06-02T11:00:37+09:00")))   # 노션에는 11:00:00으로 저장
+    [page] = fake.pages.values()
+    page = {"properties": page["properties"]}
+    assert NotionDecisionRepository.is_written(page, _record(approved_at="2026-06-02T11:00:37+09:00"))
+    # 같은 분이라도 내용이 다른 버전은 '안 씀' → 덮어쓴다
+    assert not NotionDecisionRepository.is_written(page, _record(approved_at="2026-06-02T11:00:50+09:00",
+                                                                 decision="최대 10장"))
+    assert not NotionDecisionRepository.is_written(page, _record(approved_at="2026-06-02T11:01:00+09:00"))
 
 
 def _api_error(status, code):
