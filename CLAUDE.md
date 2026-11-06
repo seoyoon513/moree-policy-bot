@@ -20,6 +20,7 @@ Discord 스레드에 흩어진 정책 결정을 정리해 Notion에 쌓고, 쌓�
 - **쓰기 작업(노션 저장·수정)은 명시적 트리거로만.** 멘션 질문처럼 자유 입력에서 Claude가 "정리하라는 뜻인가"를 추측해 쓰지 않는다. 명령어나 버튼으로만 실행한다.
 - **답변은 근거 기반.** 근거 없는 질문은 거절하고, 출처(노션/디스코드 링크)를 붙인다. 상태(제안/논의중/최종결정)를 구분한다.
 - **설정은 `app/config.py`의 `Settings` 한 곳.** `os.environ`을 직접 읽지 않고 필드를 추가한다. 봇 코드는 루트 `config.py`의 같은 이름으로 쓴다. 테스트는 `.env`를 읽지 않는다(`ENV_FILE=""`).
+- **노션 쓰기는 후속 작업으로.** 결정 저장은 원장 줄(+`ops`)이 먼저이고, 노션 저장·정책서 반영은 `app.services.followups`가 실행해 `outbox.jsonl`에 결과를 남긴다. 노션 쓰기는 다시 실행해도 결과가 같게(멱등) 만든다. 노션 날짜·`last_edited`는 **분 단위**다.
 - **노션 API는 `app/notion/`만 부른다.** 클라이언트는 `app.notion.client`(재시도·로그 설정), 속성 이름은 `app.notion.schema`, 결정 기록 저장·조회는 `DecisionRepository`. 원장(`history.jsonl`)은 `app.ledger.Ledger`로만 읽고 쓴다.
 - **로그는 `logging.getLogger(...)` + 필요하면 `extra={...}`.** 설정은 `app/logging_setup.setup_logging()` 한 곳. 봇의 새 진입점(이벤트·명령·버튼)은 `new_request_id()`로 시작하고, API 호출은 `policy_search.call_api`를 거쳐 `X-Request-ID`가 이어지게 한다.
 - **비용을 기록하지 않는 LLM 호출을 만들지 않는다.** Claude 호출은 `app.llm.LLMClient`(`create`/`acreate`)만 쓴다 — 예산 확인·사용량 기록·오류 분류가 자동이다. `messages.create`를 직접 부르면 `tests/test_llm.py`가 실패한다.

@@ -69,7 +69,10 @@ cd ~/policy-bot && git pull && docker compose up -d --build
 | 상태 | `docker compose ps` |
 | 로그 | `docker compose logs -f --tail=100 api` (서버는 JSON 한 줄 로그, 컨테이너당 최대 30MB로 회전) |
 | 요청 하나 따라가기 | `docker compose logs api bot \| grep s-1a2b3c4d` — 봇이 요청마다 만든 `request_id`가 API 로그·`usage.jsonl`에도 남는다 |
-| 상태 한눈에 | `curl -s localhost:8000/health` — `status`가 `degraded`면 `problems`에 이유 (설정 문제·동기화 실패) |
+| 상태 한눈에 | `curl -s localhost:8000/health` — `status`가 `degraded`면 `problems`에 이유 (설정 문제·동기화 실패·후속 작업 포기/지연·원장 깨진 줄) |
+| 노션 저장 대기·실패 보기 | `docker compose exec api python -m scripts.outbox list` — 처리기가 30초마다 자동으로 다시 시도한다 |
+| 지금 바로 다시 시도 | `docker compose exec api python -m scripts.outbox retry` (`--key <작업키>`, 포기한 것까지 `--include-dead`) |
+| 원장 ↔ 노션 대조 | `docker compose exec api python -m scripts.reconcile` — 보고만. 노션에 없는 기록만 만들려면 `--fix-missing` |
 | 자원 사용량 | `docker stats --no-stream` — compose의 `mem_limit`(api 1g · bot 512m)에 가까우면 조정 |
 | 컨테이너 안에 들어가기 | `docker compose exec api bash` |
 | 평가 돌리기 | `docker compose exec api python -m scripts.eval_rag --sweep` |

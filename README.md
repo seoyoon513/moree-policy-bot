@@ -162,6 +162,8 @@ curl -X POST localhost:8000/admin/sync-jobs \
 3. 승인 화면에서 결정별로 [수정](주제·상태·결정·근거·적용범위) · [제외]를 할 수 있다. 고친 필드는 `edited_fields`에 남는다.
 4. 승인하면 Notion DB와 `data/`에 저장하고, 검색 인덱스를 갱신하고, 정책서에 반영 제안을 남긴다.
 
+**실패해도 잃지 않는다 (A-5)**: 승인은 원장 줄을 쓰는 순간 확정되고, 노션 저장·정책서 반영은 그 줄에 적힌 후속 작업이다. 실패하면 `data/outbox.jsonl`에 남고 API 안의 처리기가 30초마다 다시 시도한다(1·2·4…30분 간격, 6번 실패하거나 권한·형식 오류면 포기하고 알림). 노션 쓰기는 다시 해도 결과가 같아서(기록ID로 찾아 갱신) 중복 페이지가 생기지 않는다. 검색 인덱스는 10분마다도 맞춘다.
+
 1~4는 전부 API 서버가 한다. 봇은 스레드 메시지를 모아 `POST /summaries`로 보내고, 승인 화면에서 고친 결정을 `POST /summaries/{id}/approval`로 보낼 뿐이다. 정리 결과는 승인 대기 상태로 API의 `data/pending/`에 보관되고(하루 뒤 정리), 같은 승인이 두 번 와도 한 번만 저장된다. 그래서 **`/정책정리`도 API 서버가 떠 있어야 동작한다.**
 
 **재정리**: 같은 스레드를 다시 정리하면 결정마다 `new` / `update` / `unchanged`를 판정한다. 정리 이후 새 메시지가 없으면 LLM을 부르지 않는다.
@@ -201,7 +203,8 @@ python -m scripts.reflect_saved --record <기록ID>         # 저장된 결정�
 | POST | `/admin/sync-jobs` | 재인덱싱 작업 생성 → `202` + `Location` (`X-Admin-Token` 필요) |
 | GET | `/admin/sync-jobs/{id}` | 작업 상태 |
 | GET | `/admin/usage?days=7` | 기능별 토큰·비용·지연 집계 (`X-Admin-Token` 필요) |
-| GET | `/health` | 헬스체크: `status` ok·degraded, 청크 수, 마지막 동기화 성공 시각, `problems` |
+| GET | `/admin/reconciliation` | 원장 ↔ 노션 대조 보고 (보고만, `X-Admin-Token`) |
+| GET | `/health` | 헬스체크: `status` ok·degraded, 청크 수, 마지막 동기화 성공 시각, 후속 작업(대기·포기), `problems` |
 
 주요 상태 코드: `401` 토큰 오류 · `404` 정리 결과 만료 · `409` 동기화 진행 중 · `422` 입력 검증 실패 · `429` 한도·예산 초과 · `502` Claude가 거절(키·지출 한도·요청 형식) · `503` 잠시 뒤 다시(혼잡·레이트리밋·타임아웃) 또는 답변 기능 미설정. 오류 `detail`은 사용자에게 그대로 보여 줘도 되는 문구
 
