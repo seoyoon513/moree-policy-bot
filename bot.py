@@ -1,8 +1,10 @@
-"""정책 관리 디스코드 봇 — MVP.
+"""정책 관리 디스코드 봇 — 디스코드 UI만 맡는다 (A-6).
 
-/정책정리 : 현재 스레드의 논의를 정책 결정으로 요약 → 승인 시 저장
+/정책정리 : 스레드 메시지를 모아 API(POST /summaries)로 정리 → 승인 화면 → 승인 시 API가 저장
 /정책검색 : 저장된 결정 검색 (LLM 답변 없음)
 @봇 질문  : 저장된 결정을 근거로 자연어 질문에 답변 (mention.py, 읽기 전용)
+
+LLM·노션·원장은 API만 다룬다. 봇은 메시지 수집·화면·HTTP 호출만 한다.
 """
 import asyncio
 import logging
@@ -15,10 +17,9 @@ from app import ops
 from app.config import get_settings
 from app.logging_setup import new_request_id, setup_logging
 from config import DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
-from app.services.storage import resummary_context, thread_source
-from app.services.summarizer import SummaryError, ThreadMessage, summarize_thread
+from app.domain import ThreadMessage
 from mention import handle_mention, is_addressed
-from policy_search import register_policy_commands
+from policy_search import call_api, register_policy_commands
 from thread_reader import to_thread_messages
 from views import ApprovalView
 
@@ -90,6 +91,20 @@ async def collect_thread_messages(thread: discord.Thread) -> list[ThreadMessage]
     return await to_thread_messages(raw)
 
 
+# 긴 스레드는 요약 출력이 8천 토큰까지 가서 기본 타임아웃(90초)보다 길게
+SUMMARY_API_TIMEOUT = 300
+
+
+def summary_payload(thread, messages: list[ThreadMessage], user_id: int) -> dict:
+    """POST /summaries 본문 (app/api/schemas.SummaryCreate)."""
+    return {
+        "thread_id": str(thread.id), "thread_name": thread.name, "thread_url": thread.jump_url,
+        "user_id": str(user_id),
+        "messages": [{"index": m.index, "author": m.author, "created_at": m.created_at.isoformat(), "content": m.content,
+                      "jump_url": m.jump_url, "agreed_by": m.agreed_by} for m in messages],
+    }
+
+
 @bot.tree.command(name="정책정리", description="이 스레드의 논의를 정책 결정으로 정리해요")
 async def summarize_command(interaction: discord.Interaction):
     thread = interaction.channel
@@ -105,31 +120,18 @@ async def summarize_command(interaction: discord.Interaction):
         await interaction.followup.send("정리할 메시지가 없어요.")
         return
 
-    # 재정리: 이 스레드의 현재 기록과 비교해 바뀐 것만 저장한다 (Q-7)
-    ctx = resummary_context(str(thread.id), messages)
-    if ctx.nothing_new:
-        await interaction.followup.send(f"마지막 정리 이후 새 메시지가 없어요. 기존 기록 {len(ctx.previous)}건을 그대로 둘게요.")
+    # 재정리 판정(새 메시지가 있나·달라진 결정만)과 요약은 API가 한다. 결과가 '승인 대기'면 화면을 띄운다
+    code, data = await call_api("POST", "/summaries", timeout=SUMMARY_API_TIMEOUT,
+                                json=summary_payload(thread, messages, interaction.user.id))
+    if code not in (200, 201):
+        log.warning("정리 실패 (%s): %s", code, data.get("detail"))
+        await interaction.followup.send(f"❌ {data.get('detail') or f'정리하지 못했어요 ({code})'}")
         return
-
-    try:
-        decisions = await summarize_thread(thread.name, messages, ctx.previous or None, ctx.since)
-    except SummaryError as e:
-        log.warning("요약 실패: %s", e)
-        await interaction.followup.send(f"요약에 실패했어요: {e}")
+    if data["status"] != "ready":
+        await interaction.followup.send(data.get("message") or "새로 저장할 결정이 없어요.")
         return
-
-    changed = [d for d in decisions if d["relation"] != "unchanged"]
-    if not changed:
-        msg = (f"이전 정리와 달라진 결정이 없어요 (변동 없음 {len(decisions)}건). 기존 기록을 그대로 둘게요."
-               if decisions else "이 스레드에서 정책 결정이나 논의를 찾지 못했어요.")
-        await interaction.followup.send(msg)
-        return
-
-    source = thread_source(str(thread.id), thread.name, thread.jump_url, messages)
-    log.info("정리 결과 승인 대기 (thread=%s, 결정 %d건, 변동 없음 %d건)", thread.id, len(changed),
-             len(decisions) - len(changed))
-    view = ApprovalView(owner_id=interaction.user.id, decisions=changed, source=source, messages=messages,
-                        previous=ctx.previous, unchanged=len(decisions) - len(changed))
+    view = ApprovalView(owner_id=interaction.user.id, summary_id=data["summary_id"], decisions=data["decisions"],
+                        messages=messages, previous=data["previous"], unchanged=data["unchanged"])
     view.message = await interaction.followup.send(**view.render(), wait=True)
 
 

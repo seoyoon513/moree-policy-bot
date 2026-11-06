@@ -10,11 +10,9 @@ import logging
 
 import discord
 
-from app.services import spec_reflect
 from app.logging_setup import current_request_id, set_request_id
 from config import APPROVAL_TIMEOUT, STATUSES
-from policy_search import schedule_reindex
-from app.services.storage import save_decisions
+from policy_search import call_api
 from app.domain import ThreadMessage
 
 log = logging.getLogger("policy-bot")
@@ -154,14 +152,48 @@ class EditModal(discord.ui.Modal):
         await interaction.response.edit_message(**view.render())
 
 
+# 저장 + 정책서 매칭(LLM)까지 한 요청이라 기본 타임아웃(90초)보다 길게
+APPROVAL_API_TIMEOUT = 300
+
+
+def approval_lines(mention: str, result: dict, edited: int, excluded: int) -> str:
+    """API 승인 결과(ApprovalResult) → 디스코드 메시지."""
+    saved = result.get("saved") or []
+    summary = f"결정 {len(saved)}건 저장됨"
+    if edited or excluded:
+        summary += f" (수정 {edited}건 · 제외 {excluded}건)"
+    lines = [f"✅ {mention} 님이 승인 — {summary}"]
+    for r in saved:
+        tag = f"🔁 변경 v{r['version']} · " if r.get("updated") else ("↩️ 재논의 · " if r.get("reopens") else "")
+        if r.get("notion_url"):
+            lines.append(f"• {tag}[{r['topic']}]({r['notion_url']})")
+        elif r.get("notion_error"):
+            lines.append(f"• {tag}{r['topic']} — ⚠️ Notion 저장 실패 (로컬에는 저장됨)")
+    if saved and not any(r.get("notion_url") or r.get("notion_error") for r in saved):
+        lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
+    if result.get("replayed"):
+        lines.append("(이미 승인된 정리라 다시 저장하지 않았어요)")
+    return "\n".join(lines + list(result.get("reflect_lines") or []))[:2000]
+
+
+def approval_error_text(code: int, data: dict) -> str:
+    if code == 404:
+        return "⌛ 정리 결과가 만료됐어요. 다시 `/정책정리` 해 주세요."
+    if code == 0:
+        return f"❌ {data.get('detail')}"  # API 서버에 연결 못 함
+    return f"❌ 저장하지 못했어요 ({code}): {data.get('detail')}"
+
+
 class ApprovalView(discord.ui.View):
-    def __init__(self, *, owner_id: int, decisions: list[dict], source: dict, messages: list[ThreadMessage],
+    def __init__(self, *, owner_id: int, summary_id: str, decisions: list[dict], messages: list[ThreadMessage],
                  previous: list[dict] | None = None, unchanged: int = 0):
-        """previous: 재정리일 때 이 스레드의 현재 기록. unchanged: 변동 없음이라 화면에서 뺀 결정 수."""
+        """summary_id: API(POST /summaries)가 보관 중인 정리 결과. 승인할 때 이 ID + 고친 결정만 보낸다.
+        previous: 재정리일 때 이 스레드의 현재 기록. unchanged: 변동 없음이라 화면에서 뺀 결정 수.
+        이 화면은 UI 상태(선택·수정·제외)만 들고, 저장에 필요한 원본은 API가 가진다 (A-6)."""
         super().__init__(timeout=APPROVAL_TIMEOUT)
         self.owner_id = owner_id
         self.decisions = decisions
-        self.source = source
+        self.summary_id = summary_id
         self.messages = messages
         self.previous = {r["id"]: r for r in previous or []}
         self.unchanged = unchanged
@@ -253,40 +285,19 @@ class ApprovalView(discord.ui.View):
         # 중복 클릭 방지: 먼저 버튼을 잠그고 응답을 미룸 (Notion 저장이 3초를 넘길 수 있음)
         self._disable_all()
         self.stop()
-        await interaction.response.edit_message(content="💾 저장 중…", view=self)
-        try:
-            results = await save_decisions(to_save, source=self.source, approved_by=interaction.user.display_name)
-        except Exception:
-            log.exception("저장 실패")
-            await interaction.edit_original_response(content="❌ 로컬 저장 중 오류가 났어요. 로그를 확인해 주세요.")
+        await interaction.response.edit_message(content="💾 저장 중… (정책서 반영 제안까지 10~20초 걸릴 수 있어요)", view=self)
+        code, data = await call_api(
+            "POST", f"/summaries/{self.summary_id}/approval", timeout=APPROVAL_API_TIMEOUT,
+            json={"decisions": to_save, "approved_by": interaction.user.display_name, "user_id": str(interaction.user.id)})
+        if code != 200:
+            log.warning("승인 저장 실패 (%s): %s", code, data.get("detail"))
+            await interaction.edit_original_response(content=approval_error_text(code, data))
             return
-
         edited = sum(1 for d in to_save if d.get("edited_fields"))
-        summary = f"결정 {len(results)}건 저장됨"
-        if edited or self.excluded:
-            summary += f" (수정 {edited}건 · 제외 {len(self.excluded)}건)"
-        lines = [f"✅ {interaction.user.mention} 님이 승인 — {summary}"]
-        for r in results:
-            tag = f"🔁 변경 v{r.record['version']} · " if r.updated else ("↩️ 재논의 · " if r.record.get("reopens") else "")
-            if r.notion_url:
-                lines.append(f"• {tag}[{r.record['topic']}]({r.notion_url})")
-            elif r.notion_error:
-                lines.append(f"• {tag}{r.record['topic']} — ⚠️ Notion 저장 실패 (로컬에는 저장됨)")
-        if not any(r.notion_url or r.notion_error for r in results):
-            lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
-        await interaction.edit_original_response(content="\n".join(lines)[:2000])
-        log.info("승인 저장 완료 (thread=%s, 저장 %d건, 노션 실패 %d건)", self.source.get("thread_id"), len(results),
-                 sum(1 for r in results if r.notion_error),
-                 extra={"record_ids": [r.record["id"] for r in results], "approved_by": interaction.user.id})
-        schedule_reindex()  # 새 결정을 검색 인덱스에 반영 (백그라운드)
-
-        # 원천 정책서 반영 제안 (정책서가 설정된 영역의 최종결정만). 원문은 고치지 않고 댓글·콜아웃만 넣는다
-        if spec_reflect.NOTION_SPEC_PAGES:
-            await interaction.edit_original_response(content="\n".join(lines + ["📚 기준 정책서 반영 제안 중…"])[:2000])
-            outcomes = await spec_reflect.reflect_records([(r.record, r.notion_url) for r in results],
-                                                          user=str(interaction.user.id))
-            await interaction.edit_original_response(
-                content="\n".join(lines + spec_reflect.format_outcomes(outcomes))[:2000])
+        await interaction.edit_original_response(
+            content=approval_lines(interaction.user.mention, data, edited, len(self.excluded)))
+        log.info("승인 저장 완료 (summary=%s, 저장 %d건)", self.summary_id, len(data["saved"]),
+                 extra={"record_ids": [r["id"] for r in data["saved"]], "approved_by": interaction.user.id})
 
     @discord.ui.button(label="취소", style=discord.ButtonStyle.secondary, row=2)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):

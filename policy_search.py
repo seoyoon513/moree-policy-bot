@@ -1,12 +1,10 @@
-"""/정책검색 슬래시 커맨드 + 정책 API 호출 공용 함수 + 승인 후 자동 재인덱싱.
-봇은 RAG를 직접 돌리지 않고 FastAPI(app/api)만 호출한다.
-질문 답변은 /정책질문 대신 `@봇` 멘션으로 받는다 (mention.py).
+"""/정책검색 슬래시 커맨드 + 정책 API 호출 공용 함수.
+봇은 RAG·LLM·노션을 직접 다루지 않고 FastAPI(app/api)만 호출한다 (A-6: 정리·승인도 API가 한다).
+질문 답변은 `@봇` 멘션으로 받는다 (mention.py). 승인 후 재인덱싱은 API가 직접 한다.
 
 bot.py에서:
     from policy_search import register_policy_commands
     register_policy_commands(bot.tree)
-views.py 승인 직후:
-    schedule_reindex()
 
 API 서버 주소: .env 의 POLICY_API_URL (기본 http://localhost:8000)
 """
@@ -25,14 +23,8 @@ log = logging.getLogger("policy-bot")
 
 _s = get_settings()
 API_URL = _s.policy_api_url.rstrip("/")
-ADMIN_TOKEN = _s.admin_token
 API_KEY = _s.api_key  # API 서버가 키를 요구할 때 (X-API-Key)
 TIMEOUT = aiohttp.ClientTimeout(total=90)
-
-# Notion은 방금 만든 페이지가 query 결과에 뜨기까지 몇 초 걸릴 수 있어서 잠깐 기다렸다가 동기화
-REINDEX_INITIAL_DELAY = 3.0
-REINDEX_RETRY_DELAY = 5.0
-REINDEX_RETRIES = 6
 
 AREA_CHOICES = [app_commands.Choice(name=a, value=a) for a in AREAS]
 STATUS_CHOICES = [app_commands.Choice(name=s, value=s) for s in STATUSES]
@@ -55,9 +47,12 @@ def api_headers(extra: dict | None = None) -> dict:
     return headers | (extra or {})
 
 
-async def call_api(method: str, path: str, **kwargs) -> tuple[int, dict]:
+async def call_api(method: str, path: str, *, timeout: float | None = None, **kwargs) -> tuple[int, dict]:
+    """(상태 코드, JSON) — 연결 실패는 (0, {"detail": 안내}). timeout: 이 요청만 기본(90초)과 다르게 (초)."""
     try:
         headers = api_headers(kwargs.pop("headers", {}))
+        if timeout is not None:
+            kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout)
         async with _get_session().request(method, f"{API_URL}{path}", headers=headers, **kwargs) as r:
             try:
                 data = await r.json()
@@ -66,32 +61,8 @@ async def call_api(method: str, path: str, **kwargs) -> tuple[int, dict]:
             return r.status, data
     except aiohttp.ClientConnectionError:
         return 0, {"detail": f"정책 API 서버({API_URL})에 연결할 수 없어요. uvicorn이 떠 있는지 확인해 주세요."}
-
-
-async def _reindex() -> None:
-    """동기화 작업 생성. 이미 돌고 있으면(409) 그 작업이 이번 결정을 못 읽었을 수 있으니 끝날 때까지 기다렸다 다시 요청."""
-    await asyncio.sleep(REINDEX_INITIAL_DELAY)
-    for _ in range(REINDEX_RETRIES):
-        code, data = await call_api("POST", "/admin/sync-jobs", json={}, headers={"X-Admin-Token": ADMIN_TOKEN})
-        if code == 202:
-            log.info("재인덱싱 시작 (job=%s)", data.get("id"))
-            return
-        if code == 409:
-            await asyncio.sleep(REINDEX_RETRY_DELAY)
-            continue
-        log.warning("재인덱싱 요청 실패 (%s): %s", code, data.get("detail"))
-        return
-    log.warning("재인덱싱: 진행 중인 작업이 계속 있어 이번 요청은 건너뜀")
-
-
-_background: set[asyncio.Task] = set()
-
-
-def schedule_reindex() -> None:
-    """승인 응답을 막지 않도록 백그라운드로 실행. 실패해도 저장에는 영향 없음."""
-    task = asyncio.create_task(_reindex())
-    _background.add(task)  # 참조를 들고 있어야 GC로 중간에 사라지지 않음
-    task.add_done_callback(_background.discard)
+    except asyncio.TimeoutError:
+        return 0, {"detail": "정책 API 서버 응답이 너무 늦어요. 잠시 뒤에 다시 시도해 주세요."}
 
 
 DISCORD_LIMIT = 1900  # 메시지 2000자 제한에 여유

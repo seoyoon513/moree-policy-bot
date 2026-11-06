@@ -174,7 +174,7 @@ def test_excluded_decision_is_marked_in_embed():
 
 def _view(n=2) -> ApprovalView:
     ds = normalize({"decisions": [_decision(topic=f"주제{i}") for i in range(n)]}, max_index=3)
-    return ApprovalView(owner_id=1, decisions=ds, source={}, messages=_msgs())
+    return ApprovalView(owner_id=1, decisions=ds, summary_id="s1", messages=_msgs())
 
 
 def test_view_exclude_toggle_and_render():

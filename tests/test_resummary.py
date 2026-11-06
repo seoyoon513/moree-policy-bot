@@ -193,7 +193,7 @@ def test_view_shows_previous_and_unchanged_count():
         prev = [{"id": "aaa", "status": "최종결정", "decision": "이전 결정 A"}]
         ds = normalize({"decisions": [_decision(relation="update", prior_id="aaa")]}, max_index=3,
                        prior={"aaa": prev[0]})
-        v = ApprovalView(owner_id=1, decisions=ds, source={}, messages=_msgs(), previous=prev, unchanged=2)
+        v = ApprovalView(owner_id=1, decisions=ds, summary_id="s1", messages=_msgs(), previous=prev, unchanged=2)
         out = v.render()
         assert "변경 1건 · 변동 없음 2건" in out["content"]
         names = [f.name for f in out["embeds"][0].fields]
@@ -201,7 +201,7 @@ def test_view_shows_previous_and_unchanged_count():
         assert out["embeds"][0].title.startswith("🔁")
         assert not v.toggle_link.disabled and v.toggle_link in v.children
         first = ApprovalView(owner_id=1, decisions=normalize({"decisions": [_decision()]}, max_index=3),
-                             source={}, messages=_msgs())
+                             summary_id="s1", messages=_msgs())
         assert first.toggle_link not in first.children  # 처음 정리에는 연결 버튼이 없다
     asyncio.run(run())
 

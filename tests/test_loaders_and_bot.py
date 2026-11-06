@@ -89,19 +89,37 @@ def test_policy_commands_register_on_client_tree():
     assert names == {"정책검색"}  # /정책질문은 멘션 질문으로 대체 (mention.py)
 
 
-def test_reindex_waits_out_running_job(monkeypatch):
-    import asyncio
-    import policy_search as ps
-    calls = []
-    responses = iter([(409, {"detail": "running"}), (409, {"detail": "running"}), (202, {"id": "job1"})])
+def test_bot_summary_payload_matches_api_schema():
+    """봇이 보내는 본문이 API 스키마(SummaryCreate)를 통과하는지 — 봇과 API 사이의 계약 테스트."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
 
-    async def fake_call(method, path, **kw):
-        calls.append((method, path, kw["headers"]["X-Admin-Token"]))
-        return next(responses)
+    from app.api.schemas import SummaryCreate
+    from app.domain import ThreadMessage
+    from bot import summary_payload
+    thread = SimpleNamespace(id=123, name="가짜 스레드", jump_url="https://discord.com/channels/1/123")
+    msgs = [ThreadMessage(1, "가짜", datetime(2026, 6, 1, tzinfo=timezone.utc), "안녕", "https://discord.com/x", ["동료"])]
+    body = SummaryCreate.model_validate(summary_payload(thread, msgs, 42))
+    assert (body.thread_id, body.user_id, body.messages[0].agreed_by) == ("123", "42", ["동료"])
 
-    monkeypatch.setattr(ps, "call_api", fake_call)
-    monkeypatch.setattr(ps, "ADMIN_TOKEN", "tok")
-    monkeypatch.setattr(ps, "REINDEX_INITIAL_DELAY", 0)
-    monkeypatch.setattr(ps, "REINDEX_RETRY_DELAY", 0)
-    asyncio.run(ps._reindex())
-    assert calls == [("POST", "/admin/sync-jobs", "tok")] * 3
+
+def test_approval_lines_from_api_result():
+    from views import approval_error_text, approval_lines
+    result = {"saved": [{"id": "a", "topic": "주제A", "version": 2, "updated": True, "notion_url": "https://n/a"},
+                        {"id": "b", "topic": "주제B", "version": 1, "updated": False, "notion_error": "503"}],
+              "reflect_lines": ["📚 기준 정책서 반영 제안", "• ✔️ 이미 반영됨 · 주제A"], "replayed": True}
+    text = approval_lines("@me", result, edited=1, excluded=0)
+    assert "결정 2건 저장됨 (수정 1건 · 제외 0건)" in text and "🔁 변경 v2 · [주제A](https://n/a)" in text
+    assert "주제B — ⚠️ Notion 저장 실패" in text and "다시 저장하지 않았어요" in text and text.endswith("주제A")
+    assert "만료" in approval_error_text(404, {})
+
+
+def test_bot_process_does_not_import_llm_or_notion():
+    """A-6: 봇은 디스코드 UI만. LLM·노션·벡터DB·흐름 코드는 API 프로세스만 가진다 (새 프로세스에서 확인)."""
+    import subprocess
+    import sys
+    code = ("import bot, sys; print(sorted(m for m in sys.modules if m.split('.')[0] in "
+            "('anthropic', 'notion_client', 'chromadb', 'openai') or m.startswith(('app.llm', 'app.notion', "
+            "'app.services', 'app.rag', 'app.ledger'))))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={"ENV_FILE": "", "PATH": ""})
+    assert out.stdout.strip() == "[]", out.stdout + out.stderr
