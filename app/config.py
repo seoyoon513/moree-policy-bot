@@ -1,17 +1,38 @@
-"""RAG/API 설정. 봇과 같은 .env를 읽는다 (NOTION_TOKEN, NOTION_DATA_SOURCE_ID, ANTHROPIC_API_KEY, CLAUDE_MODEL 공유)."""
+"""설정 — 봇·API·스크립트가 모두 이 Settings 하나로 .env/환경변수를 읽는다 (ARCHITECTURE_REVIEW A-1).
+
+- 환경변수를 os.environ으로 직접 읽지 않는다. 새 설정은 여기에 필드로 추가한다.
+- 우선순위: 환경변수(Docker env_file 포함) > .env 파일 > 기본값.
+- 읽을 .env 파일은 ENV_FILE로 바꿀 수 있다 (빈 값 = 파일을 읽지 않음, 테스트용).
+- 봇 코드의 `from config import X`는 루트 config.py가 이 값을 같은 이름으로 다시 내보낸다.
+"""
+import os
 from functools import lru_cache
 
-from dotenv import load_dotenv
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Settings 외에 os.environ을 직접 읽는 곳(app/usage.py 단가 등)도 .env 값을 보도록.
-# Docker에서는 env_file로 이미 환경변수가 들어오고, 이미 있는 값은 덮어쓰지 않는다.
-load_dotenv()
+
+def _csv(raw: str) -> list[str]:
+    return [s.strip() for s in raw.replace("\n", ",").split(",") if s.strip()]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=os.environ.get("ENV_FILE", ".env") or None, extra="ignore",
+                                      str_strip_whitespace=True)
+
+    # --- 디스코드 봇 ---
+    discord_token: str = ""
+    # 지정하면 해당 서버에만 슬래시 커맨드를 즉시 등록 (개발용). 비우면 전역 등록(반영까지 시간 걸림)
+    guild_id: str = ""
+    # 봇 → API 서버 주소
+    policy_api_url: str = "http://localhost:8000"
+    # 스레드에서 읽어올 최대 메시지 수 / LLM에 넣을 최대 글자 수
+    max_messages: int = 500
+    max_transcript_chars: int = 100000
+    # 요약 응답 최대 토큰. 결정이 많은 긴 스레드는 4096에서 잘려 JSON이 깨진 적이 있음
+    summary_max_tokens: int = 8192
+    # 승인 버튼 유효 시간(초)
+    approval_timeout: int = 900
 
     # --- 문서 소스 ---
     # "auto": Notion이 설정돼 있으면 Notion, 아니면 data/history.jsonl
@@ -20,8 +41,11 @@ class Settings(BaseSettings):
     data_dir: str = "data"
 
     # --- Notion (봇의 notion_store.py 스키마와 동일) ---
+    # NOTION_DATA_SOURCE_ID가 비어 있으면 봇은 로컬 JSON에만 저장
     notion_token: str = ""
     notion_data_source_id: str = ""
+    notion_database_id: str = ""
+    notion_parent_page_id: str = ""   # setup_notion.py · setup_spec_inbox.py에서만 사용
     notion_prop_title: str = "주제"
     notion_prop_area: str = "기능영역"
     notion_prop_status: str = "상태"
@@ -35,6 +59,16 @@ class Settings(BaseSettings):
     # 봇의 NOTION_SPEC_PAGES와 같은 값: "북마크=<페이지 URL/ID>,리뷰=<...>" ("*"는 기본 정책서). 비우면 결정 DB만 인덱싱
     notion_spec_pages: str = ""
     spec_index_enabled: bool = True
+
+    # --- 원천 정책서 반영 제안 (spec_reflect.py) ---
+    # 반영 제안을 낼 상태(쉼표 구분). 논의중까지 올리면 PM에게 확정 안 된 제안이 쌓인다
+    spec_reflect_statuses: str = "최종결정"
+    # 반영 제안 댓글에서 멘션할 노션 사용자 ID (PM, 쉼표 구분). 비우면 멘션 없이 댓글만
+    notion_pm_user_ids: str = ""
+    # 맞는 정책서를 못 찾은 제안을 모으는 페이지. 비우면 디스코드에만 보고
+    notion_spec_inbox_page: str = ""
+    spec_match_model: str = ""        # 비우면 llm_model
+    spec_match_max_tokens: int = 4096
 
     # --- 임베딩 ---
     # "openai" (가볍고 한국어 품질 좋음) | "local" (무료, sentence-transformers + torch 설치 필요)
@@ -86,16 +120,70 @@ class Settings(BaseSettings):
     # 알림을 보낼 Discord 웹훅 URL (채널 설정 → 연동 → 웹후크). 비우면 로그만 남김
     budget_alert_webhook_url: str = ""
 
-    def spec_pages(self) -> dict[str, list[str]]:
-        """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 ("*"는 기본 정책서라 영역에서 뺀다)."""
-        from app.rag.spec_loader import notion_id
-        out: dict[str, list[str]] = {}
-        for part in self.notion_spec_pages.replace("\n", ",").split(","):
+    # --- 토큰 사용량 기록 (app/usage.py) ---
+    usage_log_path: str = ""          # 비우면 <data_dir>/usage.jsonl
+    usage_log_disabled: bool = False  # 테스트에서 실제 파일에 기록하지 않게
+    # 단가: USD / 100만 토큰. 기본값은 작성 시점 공개 가격이라 모델·가격이 바뀌면 다시 확인
+    price_llm_input_per_mtok: float = 3.0
+    price_llm_output_per_mtok: float = 15.0
+    # 리랭커 등에 쓰는 작은 모델(이름에 haiku 포함)
+    price_small_llm_input_per_mtok: float = 1.0
+    price_small_llm_output_per_mtok: float = 5.0
+    price_embed_per_mtok: float = 0.02
+
+    # --- 쉼표 구분 값 ---
+    def spec_reflect_status_list(self) -> list[str]:
+        return _csv(self.spec_reflect_statuses)
+
+    def pm_user_id_list(self) -> list[str]:
+        return _csv(self.notion_pm_user_ids)
+
+    def spec_pages_by_area(self) -> dict[str, str]:
+        """"북마크=<페이지 URL/ID>,리뷰=<...>" → {기능영역: 페이지 값} (봇의 반영 제안용, "*"는 기본 정책서)."""
+        out = {}
+        for part in _csv(self.notion_spec_pages):
             area, _, page = part.partition("=")
             if area.strip() and page.strip():
-                areas = out.setdefault(notion_id(page.strip()), [])
-                if area.strip() != "*":
-                    areas.append(area.strip())
+                out[area.strip()] = page.strip()
+        return out
+
+    def resolved_usage_log_path(self) -> str:
+        return self.usage_log_path or os.path.join(self.data_dir, "usage.jsonl")
+
+    # --- 시작 시 점검 ---
+    def problems(self, role: str) -> list[str]:
+        """role("bot" | "api")로 실행할 때 빠졌거나 위험한 설정. 비어 있으면 OK.
+        실행 중에 처음 쓰는 순간 터지는 대신, 시작할 때 한 번에 알려 주려고 둔다."""
+        out = []
+        if role == "bot":
+            if not self.discord_token:
+                out.append("DISCORD_TOKEN이 비어 있어요.")
+            if not self.anthropic_api_key:
+                out.append("ANTHROPIC_API_KEY가 비어 있어요 (/정책정리 요약에 필요).")
+        if bool(self.notion_token) != bool(self.notion_data_source_id):
+            out.append("NOTION_TOKEN과 NOTION_DATA_SOURCE_ID는 둘 다 넣거나 둘 다 비워야 해요.")
+        if role == "api" and self.embedding_backend == "openai" and not self.openai_api_key:
+            out.append("EMBEDDING_BACKEND=openai인데 OPENAI_API_KEY가 비어 있어요.")
+        if self.rag_source not in ("auto", "notion", "jsonl"):
+            out.append(f"RAG_SOURCE는 auto|notion|jsonl 중 하나여야 해요 (지금: {self.rag_source}).")
+        return out
+
+    def warnings(self) -> list[str]:
+        """실행은 되지만 확인이 필요한 설정."""
+        out = []
+        if self.admin_token == "change-me":
+            out.append("ADMIN_TOKEN이 기본값(change-me)이에요. 외부에 열기 전에 바꿔 주세요.")
+        return out
+
+    def spec_pages(self) -> dict[str, list[str]]:
+        """정책서 페이지 ID → 그 정책서를 쓰는 기능영역들 (검색 인덱스용, "*"는 기본 정책서라 영역에서 뺀다).
+        같은 NOTION_SPEC_PAGES 값을 spec_pages_by_area()와 반대 방향으로 본 것."""
+        from app.rag.spec_loader import notion_id
+        out: dict[str, list[str]] = {}
+        for area, page in self.spec_pages_by_area().items():
+            areas = out.setdefault(notion_id(page), [])
+            if area != "*":
+                areas.append(area)
         return out
 
     def resolved_source(self) -> str:

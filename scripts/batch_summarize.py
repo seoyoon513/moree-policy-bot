@@ -241,10 +241,11 @@ async def commit(review_path: str, approved_by: str, force: bool = False, reflec
 
 
 def trigger_reindex() -> None:
-    import os
-    url = os.environ.get("POLICY_API_URL", "http://localhost:8000").rstrip("/") + "/admin/sync-jobs"
+    from app.config import get_settings
+    s = get_settings()
+    url = s.policy_api_url.rstrip("/") + "/admin/sync-jobs"
     req = urllib.request.Request(url, data=b"{}", method="POST", headers={
-        "Content-Type": "application/json", "X-Admin-Token": os.environ.get("ADMIN_TOKEN", "")})
+        "Content-Type": "application/json", "X-Admin-Token": s.admin_token})
     try:
         with urllib.request.urlopen(req, timeout=10) as res:
             print(f"🔄 재인덱싱 시작 ({res.status})")

@@ -9,7 +9,8 @@ import logging
 import discord
 from discord import app_commands
 
-from config import ANTHROPIC_API_KEY, DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
+from app.config import get_settings
+from config import DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
 from storage import resummary_context, thread_source
 from summarizer import SummaryError, ThreadMessage, summarize_thread
 from mention import handle_mention, is_addressed
@@ -126,6 +127,10 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN or not ANTHROPIC_API_KEY:
-        raise SystemExit(".env에 DISCORD_TOKEN, ANTHROPIC_API_KEY를 설정해 주세요.")
+    # 설정 문제는 실행 중 처음 쓰는 순간이 아니라 시작할 때 한 번에 알린다
+    _settings = get_settings()
+    for w in _settings.warnings():
+        log.warning("설정 확인: %s", w)
+    if problems := _settings.problems("bot"):
+        raise SystemExit("설정을 확인해 주세요 (.env 또는 환경변수):\n- " + "\n- ".join(problems))
     bot.run(DISCORD_TOKEN, log_handler=None)

@@ -68,9 +68,9 @@ flowchart LR
 ├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
 ├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
 ├── mention.py           # @봇 멘션 질문 → 맥락 수집 → /policies/answers
-├── config.py            # 봇 설정 (기능영역, 상태 목록, 정책서 페이지)
+├── config.py            # 봇용 설정 이름표(app/config.py 값을 다시 내보냄) + 기능영역·상태 상수
 ├── app/
-│   ├── config.py        # RAG/API 설정 (.env 공유)
+│   ├── config.py        # 설정 단일 출처 Settings (봇·API·스크립트 공용, .env/환경변수)
 │   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
 │   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
 │   ├── evaluation.py    # 골든셋 평가 로직

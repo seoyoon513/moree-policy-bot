@@ -12,19 +12,20 @@ API 서버 주소: .env 의 POLICY_API_URL (기본 http://localhost:8000)
 """
 import asyncio
 import logging
-import os
 
 import aiohttp  # discord.py 의존성이라 이미 설치되어 있음
 import discord
 from discord import app_commands
 
+from app.config import get_settings
 from config import AREAS, STATUSES
 
 log = logging.getLogger("policy-bot")
 
-API_URL = os.environ.get("POLICY_API_URL", "http://localhost:8000").rstrip("/")
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
-API_KEY = os.environ.get("API_KEY", "")  # API 서버가 키를 요구할 때 (X-API-Key)
+_s = get_settings()
+API_URL = _s.policy_api_url.rstrip("/")
+ADMIN_TOKEN = _s.admin_token
+API_KEY = _s.api_key  # API 서버가 키를 요구할 때 (X-API-Key)
 TIMEOUT = aiohttp.ClientTimeout(total=90)
 
 # Notion은 방금 만든 페이지가 query 결과에 뜨기까지 몇 초 걸릴 수 있어서 잠깐 기다렸다가 동기화

@@ -6,13 +6,12 @@ LLM/임베딩 API를 부를 때마다 응답의 usage(토큰 수)를 한 줄씩 
     record("answer", model, input_tokens=..., output_tokens=..., latency_ms=...)
     summarize(days=7)  # 기능별 합계
 
-단가는 .env로 바꿀 수 있다 (USD / 100만 토큰). 기본값은 작성 시점 공개 가격이라
+단가는 .env의 PRICE_*로 바꿀 수 있다 (USD / 100만 토큰, app/config.py). 기본값은 작성 시점 공개 가격이라
 모델을 바꾸거나 가격이 바뀌면 반드시 다시 확인할 것.
 """
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from collections import defaultdict
@@ -21,23 +20,19 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app.config import get_settings
+
 _lock = threading.Lock()
 
 
-def _env_float(key: str, default: float) -> float:
-    try:
-        return float(os.environ.get(key, default))
-    except ValueError:
-        return default
-
-
-# USD per 1M tokens. (input, output)
+# USD per 1M tokens. (input, output) — 값은 Settings(PRICE_* 환경변수)
 def price_table() -> dict[str, tuple[float, float]]:
+    s = get_settings()
     return {
-        "llm": (_env_float("PRICE_LLM_INPUT_PER_MTOK", 3.0), _env_float("PRICE_LLM_OUTPUT_PER_MTOK", 15.0)),
+        "llm": (s.price_llm_input_per_mtok, s.price_llm_output_per_mtok),
         # 리랭커 등에 쓰는 작은 모델(이름에 haiku 포함). 단가가 큰 모델과 달라 따로 둔다
-        "llm_small": (_env_float("PRICE_SMALL_LLM_INPUT_PER_MTOK", 1.0), _env_float("PRICE_SMALL_LLM_OUTPUT_PER_MTOK", 5.0)),
-        "embedding": (_env_float("PRICE_EMBED_PER_MTOK", 0.02), 0.0),
+        "llm_small": (s.price_small_llm_input_per_mtok, s.price_small_llm_output_per_mtok),
+        "embedding": (s.price_embed_per_mtok, 0.0),
     }
 
 
@@ -48,7 +43,7 @@ def _price_key(kind: str, model: str) -> str:
 
 
 def usage_path() -> Path:
-    return Path(os.environ.get("USAGE_LOG_PATH", os.path.join(os.environ.get("DATA_DIR", "data"), "usage.jsonl")))
+    return Path(get_settings().resolved_usage_log_path())
 
 
 @dataclass
@@ -79,7 +74,7 @@ class Usage:
 def record(u: Usage) -> Usage:
     """비용 계산 후 파일에 append. 기록 실패가 본 기능을 막으면 안 되므로 예외는 삼킨다."""
     u.compute_cost()
-    if os.environ.get("USAGE_LOG_DISABLED") == "1":
+    if get_settings().usage_log_disabled:
         return u
     try:
         p = usage_path()
