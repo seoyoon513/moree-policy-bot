@@ -21,12 +21,10 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
-from anthropic import AsyncAnthropic
-
 from app.notion import client as notion
-from app import usage as usage_log
+from app.llm import get_llm, text_of
 from app.rag.spec_loader import SpecDocument, SpecEntry, load_spec
-from config import (ANTHROPIC_API_KEY, DATA_DIR, KST, NOTION_PM_USER_IDS, NOTION_SPEC_INBOX_PAGE, NOTION_SPEC_PAGES,
+from config import (DATA_DIR, KST, NOTION_PM_USER_IDS, NOTION_SPEC_INBOX_PAGE, NOTION_SPEC_PAGES,
                     SPEC_MATCH_MAX_TOKENS, SPEC_MATCH_MODEL, SPEC_REFLECT_STATUSES)
 from prompts import SPEC_MATCH_SYSTEM, build_spec_match_prompt
 from summarizer import SummaryError, parse_json
@@ -117,23 +115,13 @@ def normalize_matches(data: dict, doc: SpecDocument, n: int) -> list[Match]:
     return [got.get(k) or Match(k, "unknown", reason="모델 응답에 없음") for k in range(1, n + 1)]
 
 
-_client: AsyncAnthropic | None = None
-
-
 async def match_records(doc: SpecDocument, records: list[dict], user: str | None = None) -> list[Match]:
-    from app import limits
-    from app.config import get_settings
-    limits.check_budget(get_settings())
-
-    global _client
-    _client = _client or AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-    with usage_log.timer() as elapsed:
-        resp = await _client.messages.create(
-            model=SPEC_MATCH_MODEL, max_tokens=SPEC_MATCH_MAX_TOKENS, system=SPEC_MATCH_SYSTEM,
-            messages=[{"role": "user", "content": build_spec_match_prompt(spec_listing(doc), decisions_text(records))}],
-        )
-    usage_log.from_anthropic("spec_match", SPEC_MATCH_MODEL, resp, elapsed(), user=user)
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    """예산 확인·사용량 기록·오류 분류는 app/llm.py. 실패(LLMError·LimitExceeded)는 reflect_records가 '⚠️ 실패'로 보고한다."""
+    resp = await get_llm().acreate(
+        "spec_match", model=SPEC_MATCH_MODEL, user=user, max_tokens=SPEC_MATCH_MAX_TOKENS, system=SPEC_MATCH_SYSTEM,
+        messages=[{"role": "user", "content": build_spec_match_prompt(spec_listing(doc), decisions_text(records))}],
+    )
+    text = text_of(resp)
     try:
         return normalize_matches(parse_json(text), doc, len(records))
     except SummaryError:

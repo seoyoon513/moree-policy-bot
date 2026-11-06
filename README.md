@@ -75,6 +75,7 @@ flowchart LR
 │   ├── notion/          # 노션 접근은 여기만: client(재시도·로그) · schema(속성 이름, 쓰기·읽기 공용) · decisions(저장소)
 │   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
 │   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
+│   ├── llm.py           # Claude 호출 1곳: 예산 확인 → 호출 → 사용량 기록 → 오류 분류(사용자 문구)
 │   ├── logging_setup.py # 로그 설정 한 곳 (text/json, request_id)
 │   ├── ops.py           # 운영 알림 웹훅, 동기화 상태(data/sync_state.json), /health 내용
 │   ├── evaluation.py    # 골든셋 평가 로직

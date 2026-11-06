@@ -160,18 +160,31 @@ def test_search_endpoint_applies_threshold(setup):
     assert r.status_code == 200 and r.json()["count"] == 0
 
 
-def test_answer_returns_502_when_claude_fails(setup):
+def _generator_raising(exc):
+    from types import SimpleNamespace
+
+    from app.rag.generator import AnswerGenerator
+
+    def create(**kw):
+        raise exc
+
+    return AnswerGenerator("k", "m", 100, client=SimpleNamespace(messages=SimpleNamespace(create=create)))
+
+
+def test_answer_maps_claude_failures_to_friendly_http_errors(setup):
     import anthropic
     import httpx
 
-    class BrokenGenerator:
-        def answer(self, question, hits, user=None, context=None):
-            raise anthropic.APIConnectionError(request=httpx.Request("POST", "https://api.anthropic.com"))
-
-    app.dependency_overrides[deps.get_generator] = lambda: BrokenGenerator()
+    req = httpx.Request("POST", "https://api.anthropic.com")
+    # 연결 실패: 잠시 뒤 나아질 수 있음 → 503
+    app.dependency_overrides[deps.get_generator] = lambda: _generator_raising(anthropic.APIConnectionError(request=req))
     r = TestClient(app).post("/policies/answers", json={"question": "리뷰 누가 쓸 수 있어?"})
-    assert r.status_code == 502
-    assert r.json()["detail"].startswith("Claude 호출 실패: APIConnectionError")
+    assert r.status_code == 503 and "연결하지 못했어요" in r.json()["detail"]
+    # 키 문제: 다시 해도 같음 → 502, 내부 오류 문자열 대신 안내 문구
+    auth = anthropic.AuthenticationError("invalid x-api-key", response=httpx.Response(401, request=req), body=None)
+    app.dependency_overrides[deps.get_generator] = lambda: _generator_raising(auth)
+    r = TestClient(app).post("/policies/answers", json={"question": "리뷰 누가 쓸 수 있어?"})
+    assert r.status_code == 502 and "API 키" in r.json()["detail"] and "x-api-key" not in r.json()["detail"]
 
 
 def test_policies_require_api_key_when_configured(setup):

@@ -22,7 +22,7 @@ Discord 스레드에 흩어진 정책 결정을 정리해 Notion에 쌓고, 쌓�
 - **설정은 `app/config.py`의 `Settings` 한 곳.** `os.environ`을 직접 읽지 않고 필드를 추가한다. 봇 코드는 루트 `config.py`의 같은 이름으로 쓴다. 테스트는 `.env`를 읽지 않는다(`ENV_FILE=""`).
 - **노션 API는 `app/notion/`만 부른다.** 클라이언트는 `app.notion.client`(재시도·로그 설정), 속성 이름은 `app.notion.schema`, 결정 기록 저장·조회는 `DecisionRepository`. 원장(`history.jsonl`)은 `app.ledger.Ledger`로만 읽고 쓴다.
 - **로그는 `logging.getLogger(...)` + 필요하면 `extra={...}`.** 설정은 `app/logging_setup.setup_logging()` 한 곳. 봇의 새 진입점(이벤트·명령·버튼)은 `new_request_id()`로 시작하고, API 호출은 `policy_search.call_api`를 거쳐 `X-Request-ID`가 이어지게 한다.
-- **비용을 기록하지 않는 LLM 호출을 만들지 않는다.** 새 호출 경로는 반드시 `app.usage`로 기록하고 한도 체크를 거친다.
+- **비용을 기록하지 않는 LLM 호출을 만들지 않는다.** Claude 호출은 `app.llm.LLMClient`(`create`/`acreate`)만 쓴다 — 예산 확인·사용량 기록·오류 분류가 자동이다. `messages.create`를 직접 부르면 `tests/test_llm.py`가 실패한다.
 - **가장 단순한 것부터, 필요할 때만 복잡성 추가.** 새 구성요소는 평가셋으로 효과를 보인 뒤 기본값으로 켠다.
 - **변경 전후는 숫자로 비교한다.** 검색·답변 품질은 `python -m scripts.eval_rag`, 비용은 `/admin/usage`.
 

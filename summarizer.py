@@ -4,11 +4,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from anthropic import AsyncAnthropic
+from app import limits
+from app.llm import LLMError, get_llm, text_of
 
-from app import usage as usage_log
-
-from config import ANTHROPIC_API_KEY, AREAS, CLAUDE_MODEL, KST, MAX_TRANSCRIPT_CHARS, STATUSES, SUMMARY_MAX_TOKENS
+from config import AREAS, CLAUDE_MODEL, KST, MAX_TRANSCRIPT_CHARS, STATUSES, SUMMARY_MAX_TOKENS
 from prompts import SYSTEM_PROMPT, build_user_prompt, format_previous
 
 
@@ -33,16 +32,6 @@ class ThreadMessage:
         if self.agreed_by:
             line += f" [동의 리액션: {', '.join(self.agreed_by)}]"
         return line
-
-
-_client: AsyncAnthropic | None = None
-
-
-def _get_client() -> AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-    return _client
 
 
 def build_transcript(messages: list[ThreadMessage], new_after: datetime | None = None) -> str:
@@ -183,18 +172,14 @@ async def summarize_thread(thread_name: str, messages: list[ThreadMessage], prev
     transcript = build_transcript(messages, datetime.fromisoformat(new_after) if new_after else None)
     prompt = build_user_prompt(thread_name, transcript, format_previous(previous) if previous else None)
     try:
-        with usage_log.timer() as elapsed:
-            resp = await _get_client().messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=SUMMARY_MAX_TOKENS,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-    except Exception as e:  # 네트워크/인증/레이트리밋 등
-        raise SummaryError(f"Claude API 호출 실패: {e}") from e
-
-    usage_log.from_anthropic("summarize", CLAUDE_MODEL, resp, elapsed())
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        # 예산 확인·사용량 기록·오류 분류는 app/llm.py가 한다 (전에는 요약만 예산 확인을 거치지 않았다)
+        resp = await get_llm().acreate("summarize", model=CLAUDE_MODEL, max_tokens=SUMMARY_MAX_TOKENS,
+                                       system=SYSTEM_PROMPT, messages=[{"role": "user", "content": prompt}])
+    except LLMError as e:
+        raise SummaryError(e.user_message) from e
+    except limits.LimitExceeded as e:
+        raise SummaryError(str(e)) from e
+    text = text_of(resp)
     if getattr(resp, "stop_reason", None) == "max_tokens":
         # 출력이 한도에서 잘리면 JSON이 닫히지 않아 파싱이 엉뚱한 위치에서 실패한다 → 원인을 그대로 알려줌
         raise SummaryError(f"출력이 max_tokens({SUMMARY_MAX_TOKENS})에서 잘림 — 스레드가 길거나 응답이 반복됨", raw=text)

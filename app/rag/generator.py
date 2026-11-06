@@ -5,9 +5,8 @@
 """
 from dataclasses import dataclass
 
-from anthropic import Anthropic
-
 from app import usage as usage_log
+from app.llm import LLMClient, text_of
 from app.rag.models import SearchHit
 
 SYSTEM_PROMPT = """너는 팀의 제품 정책 조회 도우미다. 반드시 <context> 안의 정책 문서만 근거로 답한다.
@@ -67,8 +66,9 @@ class GeneratedAnswer:
 
 
 class AnswerGenerator:
-    def __init__(self, api_key: str, model: str, max_tokens: int):
-        self.client = Anthropic(api_key=api_key)
+    def __init__(self, api_key: str, model: str, max_tokens: int, client=None):
+        # 예산 확인·사용량 기록·오류 분류는 app/llm.py (client: 테스트용 가짜)
+        self.llm = LLMClient(api_key, client=client)
         self.model = model
         self.max_tokens = max_tokens
 
@@ -77,12 +77,6 @@ class AnswerGenerator:
         if not hits:
             # 검색이 비면 LLM을 부르지 않는다 → 토큰 0 (하한선이 비용도 줄이는 이유)
             return GeneratedAnswer(NO_HITS_MESSAGE)
-        with usage_log.timer() as elapsed:
-            msg = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": build_user_message(question, hits, context)}],
-            )
-        u = usage_log.from_anthropic("answer", self.model, msg, elapsed(), user=user)
-        return GeneratedAnswer("".join(b.text for b in msg.content if b.type == "text"), u)
+        msg = self.llm.create("answer", model=self.model, user=user, max_tokens=self.max_tokens, system=SYSTEM_PROMPT,
+                              messages=[{"role": "user", "content": build_user_message(question, hits, context)}])
+        return GeneratedAnswer(text_of(msg), msg.usage_record)

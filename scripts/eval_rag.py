@@ -13,7 +13,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from anthropic import Anthropic
+from app.llm import LLMClient, text_of
 
 from app import usage as usage_log
 from app.config import get_settings
@@ -33,14 +33,10 @@ JUDGE_PROMPT = """너는 RAG 답변 채점자다. <context>의 문서와 <answer
 SWEEP = [0.0, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
 
 
-def judge(client: Anthropic, model: str, question: str, hits, answer: str) -> dict:
-    with usage_log.timer() as elapsed:
-        msg = client.messages.create(
-            model=model, max_tokens=300, system=JUDGE_PROMPT,
-            messages=[{"role": "user", "content": f"{build_context(hits)}\n\n<question>{question}</question>\n<answer>{answer}</answer>"}],
-        )
-    usage_log.from_anthropic("judge", model, msg, elapsed())
-    text = "".join(b.text for b in msg.content if b.type == "text")
+def judge(llm: LLMClient, model: str, question: str, hits, answer: str) -> dict:
+    msg = llm.create("judge", model=model, max_tokens=300, system=JUDGE_PROMPT,
+                     messages=[{"role": "user", "content": f"{build_context(hits)}\n\n<question>{question}</question>\n<answer>{answer}</answer>"}])
+    text = text_of(msg)
     try:
         d = json.loads(text[text.find("{"): text.rfind("}") + 1])
         return {"faithfulness": int(d["faithfulness"]), "relevance": int(d["relevance"]), "reason": d.get("reason", "")}
@@ -147,7 +143,7 @@ def main():
         if not s.anthropic_api_key:
             raise SystemExit("ANTHROPIC_API_KEY가 필요해요.")
         gen = AnswerGenerator(s.anthropic_api_key, s.llm_model, s.llm_max_tokens)
-        client = Anthropic(api_key=s.anthropic_api_key) if args.judge else None
+        client = LLMClient(s.anthropic_api_key) if args.judge else None
         ans_rows = []
         print("\n=== 답변 평가 ===")
         for it in items:

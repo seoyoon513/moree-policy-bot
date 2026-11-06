@@ -7,13 +7,13 @@ RESTful 설계 메모
 """
 import logging
 
-import anthropic
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.api.deps import get_generator, get_retriever, require_api_key
 from app import limits
 from app.api.schemas import AnswerRequest, AnswerResponse, PolicyHit, QuotaInfo, SearchResponse, UsageInfo
 from app.config import Settings, get_settings
+from app.llm import LLMError
 from app.rag.generator import AnswerGenerator
 from app.rag.models import SearchHit
 from app.rag.retriever import Retriever
@@ -35,6 +35,18 @@ def _to_hit(h: SearchHit, snippet_len: int = 300) -> PolicyHit:
 
 # 검색어에 붙일 맥락 길이. "이거 정책이랑 맞아?"처럼 질문만으로는 주제가 없을 때를 위한 것이라
 # 길게 붙이면 오히려 질문의 핵심이 묻힌다 (맥락은 최근 것이 끝에 오도록 만든다)
+def _upstream_error(e: Exception) -> HTTPException:
+    """LLM 호출 실패 → HTTP 오류. 본문(detail)은 사용자에게 그대로 보여 줘도 되는 문구.
+    - 예산 초과: 429 (요청은 맞지만 허용량 초과)
+    - 잠시 뒤 나아질 수 있는 실패(혼잡·레이트리밋·타임아웃): 503 Service Unavailable
+    - 설정·한도 문제(키·지출 한도·요청 형식): 502 Bad Gateway (상위 서비스가 거절)"""
+    if isinstance(e, limits.LimitExceeded):
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(e))
+    assert isinstance(e, LLMError)
+    code = status.HTTP_503_SERVICE_UNAVAILABLE if e.retryable else status.HTTP_502_BAD_GATEWAY
+    return HTTPException(code, e.user_message)
+
+
 SEARCH_CONTEXT_CHARS = 300
 
 
@@ -50,7 +62,10 @@ def search_policies(
     status: str | None = Query(None, description="상태 필터, 예: 최종결정"),
     retriever: Retriever = Depends(get_retriever),
 ):
-    hits = retriever.search(q, k=k, area=area, status=status)
+    try:
+        hits = retriever.search(q, k=k, area=area, status=status)  # 리랭크가 켜져 있으면 LLM 호출
+    except (LLMError, limits.LimitExceeded) as e:
+        raise _upstream_error(e) from e
     return SearchResponse(query=q, count=len(hits), items=[_to_hit(h) for h in hits])
 
 
@@ -69,13 +84,13 @@ def answer_policy_question(
         # 429 Too Many Requests: 요청 자체는 올바르지만 허용량을 넘었다는 뜻
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(e)) from e
 
-    hits = retriever.search(search_query(body.question, body.context), k=body.k, area=body.area, status=body.status)
     try:
+        hits = retriever.search(search_query(body.question, body.context), k=body.k, area=body.area,
+                                status=body.status)
         result = generator.answer(body.question, hits, user=x_user_id, context=body.context)
-    except anthropic.APIError as e:
-        # 우리 서버가 아니라 상위(upstream) 서비스가 실패한 것 → 502 Bad Gateway
-        log.exception("Claude 호출 실패")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Claude 호출 실패: {type(e).__name__}: {e}") from e
+    except (LLMError, limits.LimitExceeded) as e:
+        # 실패 로그·운영 알림은 app/llm.py가 이미 남겼다. 여기서는 HTTP 응답으로만 바꾼다
+        raise _upstream_error(e) from e
     if result.usage:  # LLM을 실제로 불렀을 때만 횟수·비용이 늘어난다
         quota["used_today"] += 1
         quota["month_spend_usd"] = round(quota["month_spend_usd"] + result.usage.cost_usd, 4)

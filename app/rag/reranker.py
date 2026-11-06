@@ -18,9 +18,7 @@ import json
 import logging
 import re
 
-from anthropic import Anthropic
-
-from app import usage as usage_log
+from app.llm import LLMClient, text_of
 from app.rag.models import SearchHit
 
 log = logging.getLogger("policy-api")
@@ -56,7 +54,8 @@ def _body(h: SearchHit, limit: int) -> str:
 
 class LLMReranker:
     def __init__(self, api_key: str, model: str, min_relevance: int = 2, snippet_chars: int = 200, client=None):
-        self.client = client or Anthropic(api_key=api_key)
+        # 예산 확인·사용량 기록·오류 분류는 app/llm.py (client: 테스트용 가짜)
+        self.llm = LLMClient(api_key, client=client)
         self.model = model
         self.min_relevance = min_relevance
         self.snippet_chars = snippet_chars
@@ -70,16 +69,14 @@ class LLMReranker:
             return []
         lines = [f"[{i}] {h.title} ({h.metadata.get('status', '')}, {h.metadata.get('decided_at', '')}) — {_body(h, self.snippet_chars)}"
                  for i, h in enumerate(hits, 1)]
-        with usage_log.timer() as elapsed:
-            msg = self.client.messages.create(
-                model=self.model, max_tokens=512, system=PROMPT,
-                tools=[SCORE_TOOL], tool_choice={"type": "tool", "name": "submit_scores"},
-                messages=[{"role": "user", "content": f"질문: {query}\n\n후보:\n" + "\n".join(lines)}],
-            )
-        usage_log.from_anthropic("rerank", self.model, msg, elapsed())
+        msg = self.llm.create(
+            "rerank", model=self.model, max_tokens=512, system=PROMPT,
+            tools=[SCORE_TOOL], tool_choice={"type": "tool", "name": "submit_scores"},
+            messages=[{"role": "user", "content": f"질문: {query}\n\n후보:\n" + "\n".join(lines)}],
+        )
         self.calls += 1
         tool_input = next((b.input for b in msg.content if getattr(b, "type", "") == "tool_use"), None)
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        text = text_of(msg)
         if tool_input is not None:
             scores = self._from_pairs(tool_input.get("scores"), len(hits))
             text = text or json.dumps(tool_input, ensure_ascii=False)
