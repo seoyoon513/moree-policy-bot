@@ -10,11 +10,12 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Protocol
 
 from app.config import Settings, get_settings
 from app.notion import client as notion
-from app.notion.schema import DB_TITLE, PROPERTIES, RECORD_ID, build_properties, rich_text
+from app.notion.schema import APPROVED_AT, DB_TITLE, PROPERTIES, RECORD_ID, build_properties, prop_to_str, rich_text
 
 log = logging.getLogger("policy-notion")
 
@@ -109,10 +110,30 @@ class NotionDecisionRepository:
     def client(self):
         return self._client or notion.get_async_client()
 
+    # --- 멱등 쓰기 (A-5b): 같은 작업을 몇 번 다시 실행해도 결과가 같다 ---
+    # 완료 표시 = 페이지의 '정리일' 속성이 이 버전의 승인 시각과 같음. 버전마다 승인 시각(초)이 달라서 버전을 구분한다.
+    # 속성은 항상 **마지막에** 쓰므로, 정리일이 같으면 그 버전의 본문까지 다 쓴 것이다 (DB 구조 변경 없이).
+
+    @staticmethod
+    def is_written(page: dict, record: dict) -> bool:
+        """이 페이지에 이 버전이 이미 다 써졌나 (노션은 '…:06.000+09:00'처럼 돌려줘서 시각으로 비교한다)."""
+        got = prop_to_str((page.get("properties") or {}).get(APPROVED_AT))
+        try:
+            return bool(got) and datetime.fromisoformat(got) == datetime.fromisoformat(record["approved_at"])
+        except ValueError:
+            return False
+
     async def add(self, record: dict) -> str:
-        """결정 1건을 페이지로 추가하고 URL을 돌려준다."""
+        """결정 1건을 페이지로 추가하고 URL을 돌려준다.
+        만들기 전에 기록ID로 먼저 찾는다: 지난번에 '생성은 됐는데 응답만 타임아웃'이었다면 중복으로 만들지 않는다."""
+        page = await self.find_page(record["id"])
+        if page:
+            if self.is_written(page, record):
+                log.info("노션 기록이 이미 있음 — 다시 만들지 않음 (id=%s)", record["id"], extra={"record_id": record["id"]})
+                return page.get("url", "")
+            return await self._rewrite(page, record, [])
         reopens_url = await self.find_url(record["reopens"]) if record.get("reopens") else None
-        page = await self.client.pages.create(
+        page = await self.client.pages.create(  # 속성+본문을 요청 하나로 → 반쯤 만든 페이지가 남지 않는다
             parent={"type": "data_source_id", "data_source_id": self.data_source_id},
             properties=build_properties(record),
             children=build_children(record, reopens_url),
@@ -121,31 +142,40 @@ class NotionDecisionRepository:
         return page.get("url", "")
 
     async def update(self, record: dict, previous: list[dict]) -> str:
-        """이전 기록을 덮어쓴다 (재정리에서 '변경'). 속성은 새 내용으로, 본문은 새로 쓰고 아래에 변경 이력.
-        previous: 이 기록의 이전 버전들 (오래된 순). 페이지를 못 찾으면 새로 만든다."""
+        """이전 기록을 덮어쓴다 (재정리에서 '변경'). previous: 이 기록의 이전 버전들 (오래된 순).
+        페이지를 못 찾으면 새로 만들고, 이미 이 버전이 써져 있으면 아무것도 하지 않는다."""
         page = await self.find_page(record["id"])
         if not page:
             log.warning("덮어쓸 노션 페이지가 없어 새로 만듦 (id=%s)", record["id"], extra={"record_id": record["id"]})
             return await self.add(record)
+        if self.is_written(page, record):
+            log.info("노션 기록이 이미 이 버전 — 건너뜀 (id=%s, v%s)", record["id"], record.get("version"),
+                     extra={"record_id": record["id"]})
+            return page.get("url", "")
+        return await self._rewrite(page, record, previous)
+
+    async def _rewrite(self, page: dict, record: dict, previous: list[dict]) -> str:
+        """본문 다시 쓰기 → 속성(완료 표시) 순서.
+        본문: 지금 블록 ID를 먼저 적어 두고 → 새 블록 추가 → 적어 둔 것만 삭제. 본문이 비는 순간이 없고,
+        중간에 실패해 다시 하면 그때의 블록(이전 시도의 새 블록 포함)을 적어 두고 같은 일을 하므로 결과가 같다.
+        이 페이지는 봇이 만든 결정 기록이라 통째로 다시 쓴다 (정책서 원문이 아님)."""
         client = self.client
-        await client.pages.update(page_id=page["id"], properties=build_properties(record))
-        # 본문 다시 쓰기: 이 페이지는 봇이 만든 결정 기록이라 통째로 다시 쓴다 (정책서 원문이 아님)
-        # ⚠️ 삭제 → 추가 사이에 실패하면 본문이 빈다. 순서 바꾸기·재시도는 A-5b
         old, cursor = [], None
         while True:
             kw = {"block_id": page["id"], "page_size": 100}
             if cursor:
                 kw["start_cursor"] = cursor
             res = await client.blocks.children.list(**kw)
-            old += res["results"]
+            old += [b["id"] for b in res["results"]]
             if not res.get("has_more"):
                 break
             cursor = res["next_cursor"]
-        for b in old:
-            await client.blocks.delete(block_id=b["id"])  # 휴지통으로 이동
         blocks = build_children(record) + history_blocks(previous)
         for i in range(0, len(blocks), 100):  # 요청당 최대 100블록
             await client.blocks.children.append(block_id=page["id"], children=blocks[i:i + 100])
+        for block_id in old:
+            await client.blocks.delete(block_id=block_id)  # 휴지통으로 이동
+        await client.pages.update(page_id=page["id"], properties=build_properties(record))  # 마지막 = 완료 표시
         log.info("노션 기록 갱신 (id=%s, v%s)", record["id"], record.get("version"), extra={"record_id": record["id"]})
         return page.get("url", "")
 

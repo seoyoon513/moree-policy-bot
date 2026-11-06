@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app.notion.decisions import DecisionRepository
@@ -17,8 +18,21 @@ from app.services import spec_reflect
 log = logging.getLogger("policy-followups")
 
 
+# 다시 보내도 같은 결과인 HTTP 상태: 요청 형식(400)·토큰(401)·권한(403)·대상 없음/공유 안 됨(404)
+_NO_RETRY_STATUS = {400, 401, 403, 404}
+
+
 def classify_failure(e: Exception) -> tuple[str, bool]:
-    """(오류 문구, 다시 시도하면 나을 수 있나). A-5b에서 노션 오류 종류별로 나눈다."""
+    """(오류 문구, 다시 시도하면 나을 수 있나).
+    - 다시 해 볼 것: 타임아웃·연결 오류·429·409(충돌)·5xx (notion-client가 이미 몇 번 재시도한 뒤라도 시간이 지나면 나을 수 있다)
+    - 바로 포기(dead): 400·401·403·404 — 설정·데이터 문제라 사람이 고쳐야 한다"""
+    from notion_client import APIResponseError
+    from notion_client.errors import HTTPResponseError, RequestTimeoutError
+    status = getattr(e, "status", None)
+    if isinstance(e, (APIResponseError, HTTPResponseError)) and status is not None:
+        return f"{status} {getattr(e, 'code', '')}: {e}"[:500], status not in _NO_RETRY_STATUS
+    if isinstance(e, RequestTimeoutError):
+        return f"timeout: {e}"[:500], True
     return f"{type(e).__name__}: {e}"[:500], True
 
 
@@ -29,10 +43,20 @@ async def run_notion(op: PendingOp, outbox: Outbox, repo: DecisionRepository) ->
     except Exception as e:  # noqa: BLE001 — 원장은 이미 저장됐다. 실패를 장부에 남기고 다음에 다시
         error, retryable = classify_failure(e)
         log.exception("노션 저장 실패 (%s)", op.key, extra={"op": op.key, "record_id": op.record["id"]})
-        outbox.fail(op.key, error, retryable=retryable)
+        if outbox.fail(op.key, error, retryable=retryable)["result"] == "dead":
+            await asyncio.to_thread(_alert_dead, op, error)  # 웹훅은 블로킹 HTTP라 이벤트 루프 밖에서
         return None
     outbox.done(op.key, notion_url=url)
     return url
+
+
+def _alert_dead(op: PendingOp, error: str) -> None:
+    """포기한 작업은 사람이 봐야 한다 → 운영 알림 (웹훅이 없으면 로그만)."""
+    from app import ops
+    from app.config import get_settings
+    ops.notify(get_settings(), f"⚠️ 후속 작업을 포기했어요 — {op.op} · {op.record.get('topic', '')[:60]} "
+                               f"(기록 {op.record['id']} v{op.record.get('version', 1)}): {error[:200]}\n"
+                               f"확인: python -m scripts.outbox list")
 
 
 async def run_reflect(ops: list[PendingOp], outbox: Outbox, user: str | None = None) -> list:
@@ -45,7 +69,9 @@ async def run_reflect(ops: list[PendingOp], outbox: Outbox, user: str | None = N
     for op, _ in ready:
         o = by_id.get(op.record["id"])
         if o is None or o.action == "error":
-            outbox.fail(op.key, (o.note if o else None) or "정책서 반영 결과 없음")
+            error = (o.note if o else None) or "정책서 반영 결과 없음"
+            if outbox.fail(op.key, error)["result"] == "dead":
+                await asyncio.to_thread(_alert_dead, op, error)
         else:
             outbox.done(op.key, action=o.action)
     return outcomes

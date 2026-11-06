@@ -159,9 +159,10 @@ def test_update_record_rewrites_page_with_history(monkeypatch):
     v1 = _record(version=1, decision="A", approved_by="승인자1", approved_at="2026-06-01T11:00:00+09:00")
     url = asyncio.run(repo.update(_record(), [v1]))
     kinds = [k for k, _ in fake.calls]
-    assert url == "https://notion.so/page-1" and kinds == ["update", "delete", "delete", "append"]
-    assert fake.calls[0][1]["properties"]["결정"]["rich_text"][0]["text"]["content"] == "A+B"
-    blocks = fake.calls[-1][1]["children"]
+    # A-5b: 새 블록 추가 → 옛 블록 삭제 → 속성(완료 표시) 마지막. 본문이 비는 순간이 없다
+    assert url == "https://notion.so/page-1" and kinds == ["append", "delete", "delete", "update"]
+    assert fake.calls[-1][1]["properties"]["결정"]["rich_text"][0]["text"]["content"] == "A+B"
+    blocks = fake.calls[0][1]["children"]
     texts = [b[b["type"]]["rich_text"][0]["text"]["content"] for b in blocks]
     assert "변경 이력" in texts
     toggle = next(b for b in blocks if b["type"] == "toggle")
