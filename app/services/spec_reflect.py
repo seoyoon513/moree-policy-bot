@@ -24,10 +24,20 @@ from pathlib import Path
 from app.notion import client as notion
 from app.llm import get_llm, text_of
 from app.rag.spec_loader import SpecDocument, SpecEntry, load_spec
-from config import (DATA_DIR, KST, NOTION_PM_USER_IDS, NOTION_SPEC_INBOX_PAGE, NOTION_SPEC_PAGES,
-                    SPEC_MATCH_MAX_TOKENS, SPEC_MATCH_MODEL, SPEC_REFLECT_STATUSES)
-from prompts import SPEC_MATCH_SYSTEM, build_spec_match_prompt
-from summarizer import SummaryError, parse_json
+from app.config import get_settings
+from app.domain import KST
+from app.services.prompts import SPEC_MATCH_SYSTEM, build_spec_match_prompt
+from app.services.summarizer import SummaryError, parse_json
+
+# 모듈 값 (테스트가 바꿔 끼운다)
+_s = get_settings()
+DATA_DIR = _s.data_dir
+NOTION_SPEC_PAGES = _s.spec_pages_by_area()
+SPEC_REFLECT_STATUSES = _s.spec_reflect_status_list()
+NOTION_PM_USER_IDS = _s.pm_user_id_list()
+NOTION_SPEC_INBOX_PAGE = _s.notion_spec_inbox_page
+SPEC_MATCH_MODEL = _s.spec_match_model or _s.llm_model
+SPEC_MATCH_MAX_TOKENS = _s.spec_match_max_tokens
 
 log = logging.getLogger("policy-bot")
 

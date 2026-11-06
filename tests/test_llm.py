@@ -119,8 +119,8 @@ def test_alert_only_for_config_problems_and_throttled(monkeypatch):
 
 # --- 호출하는 쪽 ---
 def test_summarizer_now_goes_through_budget_and_reports_friendly_error(monkeypatch):
-    import summarizer
-    from summarizer import SummaryError, ThreadMessage
+    from app.services import summarizer
+    from app.services.summarizer import SummaryError, ThreadMessage
 
     fake = AsyncFakeMessages(exc=_status(anthropic.BadRequestError, 400, "Your credit balance is too low"))
     monkeypatch.setattr(summarizer, "get_llm", lambda: llm.LLMClient("k", async_client=SimpleNamespace(messages=fake)))

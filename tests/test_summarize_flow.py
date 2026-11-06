@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 
 from app.notion import decisions as notion_decisions
 from app.notion import schema as notion_schema
-import storage
-from prompts import SYSTEM_PROMPT
-from summarizer import ThreadMessage, extract_urls, normalize
+from app.services import storage
+from app.services.prompts import SYSTEM_PROMPT
+from app.services.summarizer import ThreadMessage, extract_urls, normalize
 from thread_reader import agreed_users, to_thread_messages
 from views import ApprovalView, EditModal, apply_edit, build_embeds
 

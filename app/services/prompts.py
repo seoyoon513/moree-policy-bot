@@ -1,5 +1,5 @@
 """요약 프롬프트. 스키마/규칙을 바꿀 때는 이 파일만 수정."""
-from config import AREAS, STATUSES
+from app.domain import AREAS, STATUSES
 
 SYSTEM_PROMPT = f"""너는 앱 서비스 팀의 정책 결정 기록 담당자다.
 디스코드 스레드 대화를 읽고, 그 안에서 나온 '기획/정책 결정'을 구조화된 JSON으로 정리한다.

@@ -15,8 +15,8 @@ from app import ops
 from app.config import get_settings
 from app.logging_setup import new_request_id, setup_logging
 from config import DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
-from storage import resummary_context, thread_source
-from summarizer import SummaryError, ThreadMessage, summarize_thread
+from app.services.storage import resummary_context, thread_source
+from app.services.summarizer import SummaryError, ThreadMessage, summarize_thread
 from mention import handle_mention, is_addressed
 from policy_search import register_policy_commands
 from thread_reader import to_thread_messages

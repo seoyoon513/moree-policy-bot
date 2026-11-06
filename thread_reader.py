@@ -2,7 +2,7 @@
 import discord
 
 from config import AGREE_EMOJIS
-from summarizer import ThreadMessage
+from app.domain import ThreadMessage
 
 
 def format_content(m: discord.Message) -> str:

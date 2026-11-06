@@ -10,12 +10,12 @@ import logging
 
 import discord
 
-import spec_reflect
+from app.services import spec_reflect
 from app.logging_setup import current_request_id, set_request_id
 from config import APPROVAL_TIMEOUT, STATUSES
 from policy_search import schedule_reindex
-from storage import save_decisions
-from summarizer import ThreadMessage
+from app.services.storage import save_decisions
+from app.domain import ThreadMessage
 
 log = logging.getLogger("policy-bot")
 

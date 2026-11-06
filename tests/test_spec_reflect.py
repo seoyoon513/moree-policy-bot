@@ -2,9 +2,9 @@
 노션·Claude 호출 없음 (가짜 블록·가짜 클라이언트). 데이터는 전부 가짜."""
 import asyncio
 
-import spec_reflect
+from app.services import spec_reflect
 from app.rag.spec_loader import parse_tree
-from spec_reflect import Match, apply_match, format_outcomes, normalize_matches, reflect_records
+from app.services.spec_reflect import Match, apply_match, format_outcomes, normalize_matches, reflect_records
 
 PAGE = {"id": "page-1", "url": "https://notion.so/spec-1",
         "properties": {"title": {"type": "title", "title": [{"plain_text": "가짜 기능명세서"}]}}}
@@ -140,7 +140,7 @@ def test_same_without_id_and_skip_write_nothing():
 
 
 def test_prompt_prefers_fewer_proposals():
-    from prompts import SPEC_MATCH_SYSTEM
+    from app.services.prompts import SPEC_MATCH_SYSTEM
     assert '"skip"' in SPEC_MATCH_SYSTEM and "어느 항목에든" in SPEC_MATCH_SYSTEM
     assert "제안을 덜 만드는 쪽" in SPEC_MATCH_SYSTEM
     assert "문구(버튼·토스트·팝업" in SPEC_MATCH_SYSTEM  # 문구 변경은 skip이 아님 (2026-10-26 오판정)

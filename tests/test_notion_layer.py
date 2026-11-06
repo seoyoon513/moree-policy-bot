@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-import storage
+from app.services import storage
 from app.config import Settings
 from app.ledger import Ledger
 from app.notion import client as notion

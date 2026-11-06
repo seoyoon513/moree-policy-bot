@@ -14,8 +14,8 @@ from pathlib import Path
 from app.notion import client as notion
 from app.rag.spec_loader import load_spec
 from config import DATA_DIR, NOTION_SPEC_PAGES, SPEC_REFLECT_STATUSES
-from spec_reflect import match_records
-from storage import current_records
+from app.services.spec_reflect import match_records
+from app.services.storage import current_records
 
 
 def load_records(approved_by: str | None, threads: list[str]) -> list[dict]:

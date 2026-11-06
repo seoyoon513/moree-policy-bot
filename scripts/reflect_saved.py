@@ -10,8 +10,8 @@ import argparse
 import asyncio
 
 from app.notion.decisions import NotionDecisionRepository
-from spec_reflect import format_outcomes, reflect_records
-from storage import current_records
+from app.services.spec_reflect import format_outcomes, reflect_records
+from app.services.storage import current_records
 
 
 def load(records: list[str], approved_by: str | None) -> list[dict]:

@@ -27,8 +27,8 @@ from pathlib import Path
 import discord
 
 from config import ANTHROPIC_API_KEY, DATA_DIR, DISCORD_TOKEN, KST, MAX_MESSAGES
-from summarizer import SummaryError, ThreadMessage, summarize_thread
-from storage import resummary_context, thread_source
+from app.services.summarizer import SummaryError, ThreadMessage, summarize_thread
+from app.services.storage import resummary_context, thread_source
 from thread_reader import to_thread_messages
 
 LINK_RE = re.compile(r"discord(?:app)?\.com/channels/(\d+)/(\d+)(?:/(\d+))?")
@@ -200,8 +200,8 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
 
 
 async def commit(review_path: str, approved_by: str, force: bool = False, reflect: bool = True) -> None:
-    from storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
-    import spec_reflect
+    from app.services.storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
+    from app.services import spec_reflect
 
     data = json.loads(Path(review_path).read_text(encoding="utf-8"))
     saved = set() if force else already_saved_thread_ids()

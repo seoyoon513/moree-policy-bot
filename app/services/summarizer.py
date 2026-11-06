@@ -1,37 +1,25 @@
 """스레드 메시지 → Claude 요약 → 정규화된 결정 목록."""
 import json
 import re
-from dataclasses import dataclass, field
 from datetime import datetime
 
 from app import limits
 from app.llm import LLMError, get_llm, text_of
 
-from config import AREAS, CLAUDE_MODEL, KST, MAX_TRANSCRIPT_CHARS, STATUSES, SUMMARY_MAX_TOKENS
-from prompts import SYSTEM_PROMPT, build_user_prompt, format_previous
+from app.config import get_settings
+from app.domain import AREAS, KST, STATUSES, ThreadMessage  # noqa: F401  (ThreadMessage: 예전 import 경로 유지)
+from app.services.prompts import SYSTEM_PROMPT, build_user_prompt, format_previous
+
+_s = get_settings()
+CLAUDE_MODEL = _s.llm_model
+MAX_TRANSCRIPT_CHARS = _s.max_transcript_chars
+SUMMARY_MAX_TOKENS = _s.summary_max_tokens
 
 
 class SummaryError(Exception):
     def __init__(self, msg: str, raw: str | None = None):
         super().__init__(msg)
         self.raw = raw  # 실패 원인 분석용 모델 원문 응답
-
-
-@dataclass
-class ThreadMessage:
-    index: int          # 1부터 시작하는 메시지 번호 (#N)
-    author: str
-    created_at: datetime
-    content: str
-    jump_url: str
-    agreed_by: list[str] = field(default_factory=list)  # 동의 리액션을 남긴 사람 (작성자 제외)
-
-    def to_line(self, new: bool = False) -> str:
-        ts = self.created_at.astimezone(KST).strftime("%m-%d %H:%M")
-        line = f"[#{self.index}] [{ts}]{' [새 메시지]' if new else ''} {self.author}: {self.content}"
-        if self.agreed_by:
-            line += f" [동의 리액션: {', '.join(self.agreed_by)}]"
-        return line
 
 
 def build_transcript(messages: list[ThreadMessage], new_after: datetime | None = None) -> str:
