@@ -10,7 +10,7 @@ Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, �
   스레드 최근 메시지와 답장한 이전 Q/A를 맥락으로 써서 "이거 정책이랑 맞아?", "그럼 비회원은?" 같은 질문도 받는다. 봇 답변에 답장하면 대화가 이어진다.
   (예전 `/정책질문` 명령어를 대체)
 
-방향과 설계 결정은 [`docs/DIRECTION.md`](docs/DIRECTION.md), 작업 목록과 진행 상태는 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md), 배포는 [`docs/DEPLOY.md`](docs/DEPLOY.md)에 있다.
+전체 그림·흐름·설계에서 신경 쓴 부분은 [`docs/ENGINEERING.md`](docs/ENGINEERING.md), 방향과 설계 결정은 [`docs/DIRECTION.md`](docs/DIRECTION.md), 작업 목록과 진행 상태는 [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md), 배포는 [`docs/DEPLOY.md`](docs/DEPLOY.md)에 있다.
 
 ## 구조
 
