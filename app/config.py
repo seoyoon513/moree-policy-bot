@@ -156,11 +156,13 @@ class Settings(BaseSettings):
         """role("bot" | "api")로 실행할 때 빠졌거나 위험한 설정. 비어 있으면 OK.
         실행 중에 처음 쓰는 순간 터지는 대신, 시작할 때 한 번에 알려 주려고 둔다."""
         out = []
-        if role == "bot":
+        if role == "bot":  # 봇은 디스코드 UI만 (A-6): LLM·노션 키는 API에만 있으면 된다
             if not self.discord_token:
                 out.append("DISCORD_TOKEN이 비어 있어요.")
-            if not self.anthropic_api_key:
-                out.append("ANTHROPIC_API_KEY가 비어 있어요 (/정책정리 요약에 필요).")
+            if not self.policy_api_url.startswith(("http://", "https://")):
+                out.append(f"POLICY_API_URL이 http(s) 주소가 아니에요 (지금: {self.policy_api_url}).")
+        if role == "api" and not self.anthropic_api_key:
+            out.append("ANTHROPIC_API_KEY가 비어 있어요 (/정책정리 요약·답변에 필요).")
         if bool(self.notion_token) != bool(self.notion_data_source_id):
             out.append("NOTION_TOKEN과 NOTION_DATA_SOURCE_ID는 둘 다 넣거나 둘 다 비워야 해요.")
         if role == "api" and self.embedding_backend == "openai" and not self.openai_api_key:

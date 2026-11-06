@@ -47,8 +47,9 @@ def test_usage_log_path_defaults_to_data_dir():
 
 
 def test_problems_for_bot():
-    assert len(Settings().problems("bot")) == 2  # DISCORD_TOKEN, ANTHROPIC_API_KEY
-    assert Settings(discord_token="t", anthropic_api_key="k").problems("bot") == []
+    assert len(Settings().problems("bot")) == 1  # DISCORD_TOKEN (LLM·노션 키는 API에만 필요)
+    assert Settings(discord_token="t").problems("bot") == []
+    assert any("POLICY_API_URL" in p for p in Settings(discord_token="t", policy_api_url="api:8000").problems("bot"))
 
 
 def test_problems_notion_pair_and_rag_source():
@@ -58,9 +59,10 @@ def test_problems_notion_pair_and_rag_source():
     assert any("RAG_SOURCE" in p for p in Settings(**ok, rag_source="notoin").problems("bot"))
 
 
-def test_problems_for_api_embedding_key():
+def test_problems_for_api_keys():
     assert any("OPENAI_API_KEY" in p for p in Settings().problems("api"))
-    assert Settings(embedding_backend="local").problems("api") == []
+    assert any("ANTHROPIC_API_KEY" in p for p in Settings(embedding_backend="local").problems("api"))
+    assert Settings(embedding_backend="local", anthropic_api_key="k").problems("api") == []
 
 
 def test_admin_token_default_is_a_warning():

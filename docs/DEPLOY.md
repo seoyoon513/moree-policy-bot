@@ -90,7 +90,8 @@ ssh -i ~/keys/policy-bot.pem -L 8000:127.0.0.1:8000 ubuntu@<공개IP>
 | bot이 계속 재시작 | `docker compose logs bot` — 시작할 때 "설정을 확인해 주세요" 아래에 빠진 값이 나온다 |
 | 컨테이너가 `OOMKilled` | `docker inspect <컨테이너> \| grep OOM` → compose `mem_limit`을 올리거나 VM 메모리 확인 |
 | `/health`가 `degraded` | `problems` 확인. 동기화 실패면 `docker compose logs api \| grep 동기화`, 3회 연속 실패 시 운영 웹훅으로 알림 |
-| `정책 API 서버(http://api:8000)에 연결할 수 없어요` | `docker compose ps`로 api healthy인지 |
+| `정책 API 서버(http://api:8000)에 연결할 수 없어요` | `docker compose ps`로 api healthy인지. A-6 이후로 `/정책정리`·승인도 API가 하므로 api가 죽으면 정리도 안 된다 |
+| 승인 시 `⌛ 정리 결과가 만료됐어요` | API의 `data/pending/`에 대기 파일이 없음(하루 지나 정리됐거나 다른 DATA_DIR). 다시 `/정책정리` |
 | `Permission denied: /app/data/...` | 호스트 `data/` 소유자가 uid 1000이 아님 → `sudo chown -R 1000:1000 data` |
 | 빌드 중 멈춤/Killed | 메모리 부족 → 2GB 이상 VM 또는 swap 추가 |
 | Mac(M칩)에서 만든 이미지를 서버로 옮겼더니 `exec format error` | CPU 아키텍처 차이(arm64 vs amd64). 서버에서 직접 빌드하면 해결 |

@@ -15,7 +15,7 @@ from app.rag.store import VectorStore
 
 
 def _settings(tmp_path, **kw):
-    return Settings(data_dir=str(tmp_path), embedding_backend="local", admin_token="t", **kw)
+    return Settings(data_dir=str(tmp_path), embedding_backend="local", admin_token="t", anthropic_api_key="k", **kw)
 
 
 # --- 로그 ---

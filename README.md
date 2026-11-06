@@ -18,28 +18,31 @@ Discord 스레드에서 흩어진 정책 결정을 정리해 Notion에 쌓고, �
 flowchart LR
     U[Discord 사용자] --> B
 
-    subgraph B[bot.py 프로세스]
-        S["/정책정리<br/>summarizer · views · storage · spec_reflect"]
-        P["policy_search.py · mention.py<br/>/정책검색 · @봇 질문"]
+    subgraph B["bot.py 프로세스 — 디스코드 UI만"]
+        S["/정책정리 · 승인 화면<br/>thread_reader · views"]
+        P["/정책검색 · @봇 질문<br/>policy_search · mention"]
     end
 
-    subgraph A["FastAPI 프로세스 (uvicorn)"]
-        J["/admin/sync-jobs<br/>재인덱싱"]
+    subgraph A["FastAPI 프로세스 (uvicorn) — 저장소·LLM은 여기만"]
+        SU["/summaries<br/>정리 · 승인"]
         Q["/policies<br/>검색 · 답변"]
+        J["재인덱싱<br/>(승인 직후 · /admin/sync-jobs)"]
     end
 
-    S -- 승인 후 자동 호출 --> J
+    S -- HTTP --> SU
     P -- HTTP --> Q
-    S --> N[(Notion DB)]
-    S -- 반영 제안 --> SP[(Notion 정책서<br/>댓글 · 콜아웃)]
-    S --> H[(data/history.jsonl)]
-    J --> C[(data/chroma)]
+    SU --> H[(data/history.jsonl<br/>원장)]
+    SU --> N[(Notion DB<br/>원본)]
+    SU -- 반영 제안 --> SP[(Notion 정책서<br/>댓글 · 콜아웃)]
+    SU --> J
+    J --> C[(data/chroma<br/>검색 캐시)]
     Q --> C
-    Q --> CL[Claude API]
+    SU & Q --> CL[Claude API]
     J --> OA[OpenAI 임베딩]
 ```
 
-봇과 API는 별도 프로세스이고 HTTP로만 통신한다. 봇은 RAG 로직을 갖지 않고, 검색 인덱스는 API 서버 프로세스만 갱신한다.
+봇과 API는 별도 프로세스이고 HTTP로만 통신한다. **봇은 디스코드 UI(메시지 수집·승인 화면·답변 표시)만 맡고, LLM·노션·원장·검색 인덱스는 API 프로세스만 다룬다** (`tests/test_loaders_and_bot.py`가 봇이 이런 모듈을 import하지 않는지 확인).
+저장소 역할: 노션 = 원본, `history.jsonl` = 버전 원장, Chroma = 노션에서 다시 만들 수 있는 검색 캐시 (`docs/ARCHITECTURE_REVIEW.md` 2-1).
 
 ### RAG 흐름
 
@@ -57,13 +60,9 @@ flowchart LR
 ## 폴더 구성
 
 ```
-├── bot.py               # 디스코드 봇 진입점, /정책정리
+├── bot.py               # 디스코드 봇 진입점, /정책정리 (메시지 수집 → POST /summaries)
 ├── thread_reader.py     # 스레드 메시지 읽기 (동의 리액션 표시 포함)
-├── summarizer.py        # 스레드 → 정책 결정 요약 (Claude), 재정리 시 new/update/unchanged 판정
-├── prompts.py           # 요약·정책서 매칭 프롬프트 / 출력 스키마
-├── views.py             # 승인 화면(결정별 수정·제외·연결 해제), 승인 후 재인덱싱·정책서 반영 호출
-├── storage.py           # 승인 저장 흐름: 원장(history.jsonl) → 결정 기록 저장소(노션)
-├── spec_reflect.py      # 승인된 결정 → 정책서 매칭 → 댓글·콜아웃·미분류 페이지 반영 제안
+├── views.py             # 승인 화면(결정별 수정·제외·연결 해제) → POST /summaries/{id}/approval
 ├── setup_notion.py      # Notion DB 최초 생성 / 이미 있으면 새 속성만 추가
 ├── policy_search.py     # /정책검색 → API 호출, API 호출·메시지 분할 공용
 ├── mention.py           # @봇 멘션 질문 → 맥락 수집 → /policies/answers
@@ -79,7 +78,8 @@ flowchart LR
 │   ├── logging_setup.py # 로그 설정 한 곳 (text/json, request_id)
 │   ├── ops.py           # 운영 알림 웹훅, 동기화 상태(data/sync_state.json), /health 내용
 │   ├── evaluation.py    # 골든셋 평가 로직
-│   ├── api/             # FastAPI: main, routers(policies · sync · usage), schemas, deps
+│   ├── services/        # 흐름: summarizer(요약·재정리 판정) · prompts · storage(승인 저장) · spec_reflect(정책서 반영) · approvals(승인 대기·멱등 승인)
+│   ├── api/             # FastAPI: main, routers(policies · summaries · sync · usage), schemas, deps
 │   └── rag/             # 로더(결정·정책서), 청킹, 임베딩, 저장소, 키워드, 검색, 리랭킹, 생성
 ├── scripts/             # ingest · eval_rag · batch_summarize · 정책서 확인/반영 도구 (아래 각 절)
 ├── eval/                # 골든셋 형식 설명과 예시 (실제 골든셋·결과는 git 제외)
@@ -116,7 +116,7 @@ cp .env.example .env
 | 키 | 필수 | 설명 |
 |---|---|---|
 | `DISCORD_TOKEN` | ✅ | 봇 토큰 |
-| `ANTHROPIC_API_KEY` | ✅ | 요약, 멘션 질문 답변 |
+| `ANTHROPIC_API_KEY` | ✅ (API) | 요약, 정책서 매칭, 멘션 질문 답변. 봇 프로세스에는 필요 없다 |
 | `GUILD_ID` | 권장 | 지정하면 해당 서버에 커맨드 즉시 등록 |
 | `CLAUDE_MODEL` | | 기본 `claude-sonnet-5-5` |
 | `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` | | Notion 저장/조회. `setup_notion.py`가 ID를 채움 |
@@ -126,7 +126,7 @@ cp .env.example .env
 | `RAG_MIN_SCORE` | | 검색 점수 하한선, 기본 `0.3` |
 | `ADMIN_TOKEN` | ✅ | `/admin/sync-jobs` 인증. 임의의 긴 문자열 |
 | `POLICY_API_URL` | | 봇이 부를 API 주소, 기본 `http://localhost:8000` (Docker에서는 `http://api:8000`) |
-| `API_KEY` | 외부 공개 시 | `/policies/*` 인증 키 |
+| `API_KEY` | 외부 공개 시 | `/policies/*`·`/summaries/*` 인증 키 (봇도 같은 값으로 호출) |
 | `RERANK_ENABLED` | | LLM 리랭킹 사용 (`RERANK_MODEL` 기본 `claude-haiku-5-5`) |
 | `HYBRID_ENABLED` | | 벡터 + BM25 하이브리드 검색 (기본 꺼짐) |
 | `NOTION_SPEC_PAGES` | | 기능영역별 정책서 페이지. 반영 제안과 검색 인덱스에 같이 쓴다 (`SPEC_INDEX_ENABLED=false`로 인덱싱만 끔) |
@@ -162,6 +162,8 @@ curl -X POST localhost:8000/admin/sync-jobs \
 3. 승인 화면에서 결정별로 [수정](주제·상태·결정·근거·적용범위) · [제외]를 할 수 있다. 고친 필드는 `edited_fields`에 남는다.
 4. 승인하면 Notion DB와 `data/`에 저장하고, 검색 인덱스를 갱신하고, 정책서에 반영 제안을 남긴다.
 
+1~4는 전부 API 서버가 한다. 봇은 스레드 메시지를 모아 `POST /summaries`로 보내고, 승인 화면에서 고친 결정을 `POST /summaries/{id}/approval`로 보낼 뿐이다. 정리 결과는 승인 대기 상태로 API의 `data/pending/`에 보관되고(하루 뒤 정리), 같은 승인이 두 번 와도 한 번만 저장된다. 그래서 **`/정책정리`도 API 서버가 떠 있어야 동작한다.**
+
 **재정리**: 같은 스레드를 다시 정리하면 결정마다 `new` / `update` / `unchanged`를 판정한다. 정리 이후 새 메시지가 없으면 LLM을 부르지 않는다.
 `update`는 이전 기록을 덮어쓰고 이전 버전을 '변경 이력'에 남긴다. 이전이 최종결정인데 이번이 논의중이면 덮지 않고 새 기록으로 저장하고 "재논의 대상"으로 연결한다 (답변: "현재 A, B로 변경 논의 중").
 잘못 연결됐으면 승인 화면의 [연결 해제]로 새 기록으로 저장한다. 설계 이유는 `docs/DIRECTION.md` 2-1.
@@ -192,14 +194,16 @@ python -m scripts.reflect_saved --record <기록ID>         # 저장된 결정�
 
 | Method | Path | 설명 |
 |---|---|---|
+| POST | `/summaries` | 스레드 정리(요약) → 승인 대기면 `201` + `Location`, 새로 만든 게 없으면 `200` (`status`로 이유) |
+| POST | `/summaries/{id}/approval` | 승인 → 저장·정책서 반영·재인덱싱. 다시 보내면 저장 없이 첫 결과 (`replayed: true`) |
 | GET | `/policies/search?q=&k=&area=&status=` | 정책 검색 |
 | POST | `/policies/answers` | RAG 답변 `{question, area?, status?, k?}` |
 | POST | `/admin/sync-jobs` | 재인덱싱 작업 생성 → `202` + `Location` (`X-Admin-Token` 필요) |
 | GET | `/admin/sync-jobs/{id}` | 작업 상태 |
 | GET | `/admin/usage?days=7` | 기능별 토큰·비용·지연 집계 (`X-Admin-Token` 필요) |
-| GET | `/health` | 헬스체크, 인덱싱된 청크 수 |
+| GET | `/health` | 헬스체크: `status` ok·degraded, 청크 수, 마지막 동기화 성공 시각, `problems` |
 
-주요 상태 코드: `401` 토큰 오류 · `409` 동기화 진행 중 · `422` 입력 검증 실패 · `502` Claude 호출 실패 · `503` 답변 기능 미설정
+주요 상태 코드: `401` 토큰 오류 · `404` 정리 결과 만료 · `409` 동기화 진행 중 · `422` 입력 검증 실패 · `429` 한도·예산 초과 · `502` Claude가 거절(키·지출 한도·요청 형식) · `503` 잠시 뒤 다시(혼잡·레이트리밋·타임아웃) 또는 답변 기능 미설정. 오류 `detail`은 사용자에게 그대로 보여 줘도 되는 문구
 
 ## 측정
 ### 토큰 사용량
@@ -251,6 +255,7 @@ python -m scripts.eval_rag --hybrid --rerank    # 하이브리드 검색 + 리�
 
 ## 초기 데이터 일괄 정리
 지난 스레드를 한 번에 `/정책정리` 한다. Discord에는 읽기만 하므로 흔적이 남지 않는다.
+관리 도구라 API를 거치지 않고 같은 흐름(`app/services/`)을 직접 부른다. 서버에서는 API 컨테이너 안에서 실행한다 (`docker compose exec api python -m scripts.batch_summarize ...`) — 원장·인덱스를 쓰는 곳이 한 컨테이너에 모이게.
 ```bash
 python -m scripts.batch_summarize data/links.txt          # 요약 → data/batch/review-*.json (저장 안 함)
 python -m scripts.batch_summarize --commit data/batch/review-*.json --approved-by 이름   # 검토 후 저장

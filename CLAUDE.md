@@ -9,10 +9,10 @@ Discord 스레드에 흩어진 정책 결정을 정리해 Notion에 쌓고, 쌓�
 3. 작업이 끝나면 `docs/EXPERIMENTS.md`의 상태와 "작업 로그"를 갱신한다. 다음 세션은 이 파일로 이어간다.
 
 ## 구조 한 줄 요약
-- `bot.py` + `policy_search.py`: 디스코드 봇. RAG 로직은 갖지 않고 FastAPI만 HTTP로 호출한다.
-- `app/`: FastAPI 정책 서비스 (검색·답변·재인덱싱·사용량). `app/rag/`에 로더→청킹→임베딩→Chroma→검색(+리랭킹)→생성.
+- `bot.py` + `views.py` + `policy_search.py`: 디스코드 봇 = **UI만**. 정리·승인·검색·답변 모두 FastAPI를 HTTP로 호출한다. 봇은 LLM·노션·원장 모듈을 import하지 않는다(테스트로 확인).
+- `app/`: FastAPI 정책 서비스 (정리·승인·검색·답변·재인덱싱·사용량). `app/services/`에 흐름(요약·승인 저장·정책서 반영), `app/rag/`에 로더→청킹→임베딩→Chroma→검색(+리랭킹)→생성.
 - 사용량은 `data/usage.jsonl` 하나가 기준 (토큰·비용·지연·사용자). 한도(`app/limits.py`)도 이 파일을 센다.
-- `spec_reflect.py`: 승인된 결정을 정책서와 매칭해 댓글·콜아웃으로 반영 제안 (정책서 원문은 수정하지 않음).
+- `app/services/spec_reflect.py`: 승인된 결정을 정책서와 매칭해 댓글·콜아웃으로 반영 제안 (정책서 원문은 수정하지 않음).
 - 정리 결과 저장: Notion DB(원본) + `data/history.jsonl` + `data/decisions/<영역>/`. 각 레코드에 `source.thread_id`가 있다.
 
 ## 지켜야 할 원칙
