@@ -11,14 +11,32 @@
 - 답장한 메시지: 봇 답변이면 그때의 Q/A, 다른 사람 메시지면 그 내용
 - 스레드 안이면 최근 메시지 N개 (일반 채널은 주제가 섞여 있어 넣지 않는다)
 """
+import json
 import logging
 import re
+from pathlib import Path
 
 import discord
 
 from bot.policy_search import call_api, send_chunked
+from shared.config import get_settings
+
+DATA_DIR = get_settings().data_dir
 
 log = logging.getLogger("policy-bot")
+
+# 인사말은 API(검색·LLM)를 거치지 않고 바로 답한다. 정규화 후 '완전히 같을 때'만 인사로 본다.
+# "안녕 이 정책 알려줘"처럼 질문이 섞인 문장은 인사가 아니라 일반 질문으로 간다.
+GREETINGS = {
+    "ㅎㅇ", "ㅎㅇㅎㅇ", "하이", "하잉", "안녕", "안뇽", "안녕하세요", "안녕하세용", "안뇽하세요",
+    "안녕하십니까", "방가", "방갑", "반가워", "반갑습니다", "hi", "hihi", "hello", "hey", "yo", "헬로", "헬로우",
+}
+GREETING_SUFFIXES = ("정책봇", "자진모리", "봇")  # "안녕 정책봇"의 호칭은 떼고 비교
+DEFAULT_GREETING = "안녕하세요! 정책 관련해서 궁금한 걸 물어봐주세요"
+# 사용자별 인사는 팀원 ID가 들어가므로 코드(퍼블릭 레포)가 아니라 gitignore된 데이터 파일에 둔다
+# 형식: {"<디스코드 사용자 ID>": "문구" | {"text": "문구", "image": "파일명.jpeg"}, ...}
+GREETINGS_FILE = Path(DATA_DIR) / "greetings.json"
+IMAGES_DIR = Path("data/images")  # compose 볼륨(./data:/app/data) 안. image는 이 폴더 안의 파일명만 쓴다
 
 RECENT_MESSAGES = 10          # 스레드 맥락으로 넣을 최근 메시지 수
 MESSAGE_CHARS = 400           # 맥락 메시지 1개당 최대 글자
@@ -58,6 +76,41 @@ def parse_bot_answer(content: str) -> tuple[str, str] | None:
     question = head[len(ANSWER_PREFIX):].removesuffix("**").strip()
     answer = rest.split("\n**근거 문서**")[0].strip()
     return question, answer
+
+
+def normalize_greeting(text: str) -> str:
+    """인사 비교용 정규화: 소문자, 공백·기호 제거, 같은 글자 연속은 하나로, 끝의 봇 호칭 제거."""
+    text = re.sub(r"[^0-9a-z가-힣ㄱ-ㅎㅏ-ㅣ]", "", text.lower())
+    text = re.sub(r"(.)\1+", r"\1", text)  # "하이이이" → "하이"
+    for suffix in GREETING_SUFFIXES:
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+_GREETING_SET = {normalize_greeting(g) for g in GREETINGS}
+
+
+def is_greeting(question: str) -> bool:
+    return normalize_greeting(question) in _GREETING_SET
+
+
+def greeting_reply(user_id: int, path: Path | None = None) -> tuple[str, Path | None]:
+    """(문구, 이미지 경로). 사용자별 설정이 없거나 파일이 깨졌으면 기본 인사. 매번 읽어서 파일만 고치면 바로 반영된다."""
+    try:
+        custom = json.loads((path or GREETINGS_FILE).read_text(encoding="utf-8")).get(str(user_id))
+    except (OSError, ValueError, AttributeError):
+        custom = None
+    if isinstance(custom, str):
+        custom = {"text": custom}
+    if not isinstance(custom, dict):
+        return DEFAULT_GREETING, None
+    text = custom.get("text")
+    text = text if isinstance(text, str) and text.strip() else DEFAULT_GREETING
+    name = custom.get("image")
+    # 파일명만 허용 (../ 로 data 밖을 가리키지 못하게). 파일이 없으면 이미지 없이 문구만 보낸다
+    image = IMAGES_DIR / Path(name).name if isinstance(name, str) and name.strip() else None
+    return text, image if image and image.is_file() else None
 
 
 def _cut(text: str, n: int) -> str:
@@ -134,6 +187,12 @@ async def handle_mention(message: discord.Message, bot_user: discord.abc.User) -
     question = extract_question(message.content, ids)
     if len(question) < 2:
         await message.reply(HELP_TEXT, mention_author=False)
+        return
+
+    if is_greeting(question):  # 검색·LLM 호출 없음 → 비용·일일 한도에 안 잡힌다
+        text, image = greeting_reply(message.author.id)
+        files = {"file": discord.File(image)} if image else {}
+        await message.reply(text, mention_author=False, **files)
         return
 
     async with message.channel.typing():  # 답변까지 수 초 걸리니 '입력 중' 표시
