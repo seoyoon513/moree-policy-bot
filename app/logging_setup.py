@@ -87,5 +87,5 @@ def setup_logging(service: str, *, fmt: str | None = None, level: str | None = N
     root.addHandler(handler)
     root.setLevel(level.upper())
     # 외부 라이브러리의 요청 단위 로그는 줄인다 (notion-client·httpx는 INFO에 호출마다 한 줄씩 남김)
-    for noisy in ("httpx", "httpcore", "notion_client", "chromadb"):
+    for noisy in ("httpx", "httpx2", "httpcore", "notion_client", "chromadb"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
