@@ -201,7 +201,7 @@ async def read_and_summarize(links_path: str, force: bool, limit: int | None) ->
 
 async def commit(review_path: str, approved_by: str, force: bool = False, reflect: bool = True) -> None:
     from app.services.storage import save_decisions  # 여기서 import: 1단계에선 Notion 설정이 없어도 돌게
-    from app.services import spec_reflect
+    from app.services.followups import reflect_after_save
 
     data = json.loads(Path(review_path).read_text(encoding="utf-8"))
     saved = set() if force else already_saved_thread_ids()
@@ -220,13 +220,12 @@ async def commit(review_path: str, approved_by: str, force: bool = False, reflec
         # JSON을 거치면 dict 키가 문자열이 되므로 메시지 번호(int)로 되돌린다
         source["messages_by_index"] = {int(k): v for k, v in source["messages_by_index"].items()}
         # 결정일은 결정마다 근거 메시지 시각으로 계산된다 (storage.py). 승인 시각(정리일)은 지금
-        results = await save_decisions(decisions, source=source, approved_by=approved_by)
+        results = await save_decisions(decisions, source=source, approved_by=approved_by, plan_reflect=reflect)
         total += len(results)
         notion_fail += sum(1 for x in results if x.notion_error)
         print(f"  ✓ {r['thread_name'][:40]} — {len(results)}건 저장")
-        if reflect:  # 디스코드 승인 버튼과 같은 반영 단계
-            outcomes = await spec_reflect.reflect_records([(x.record, x.notion_url) for x in results], user=approved_by)
-            for line in spec_reflect.format_outcomes(outcomes):
+        if reflect:  # 디스코드 승인과 같은 반영 단계 (후속 작업 장부에 결과가 남는다)
+            for line in await reflect_after_save(results, user=approved_by):
                 print(f"      {line}")
     print(f"\n저장 {total}건 (Notion 실패 {notion_fail}건)")
     trigger_reindex()

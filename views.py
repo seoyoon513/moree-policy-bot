@@ -167,8 +167,9 @@ def approval_lines(mention: str, result: dict, edited: int, excluded: int) -> st
         tag = f"🔁 변경 v{r['version']} · " if r.get("updated") else ("↩️ 재논의 · " if r.get("reopens") else "")
         if r.get("notion_url"):
             lines.append(f"• {tag}[{r['topic']}]({r['notion_url']})")
-        elif r.get("notion_error"):
-            lines.append(f"• {tag}{r['topic']} — ⚠️ Notion 저장 실패 (로컬에는 저장됨)")
+        elif r.get("notion_pending") or r.get("notion_error"):
+            # 원장에는 저장됐고 후속 작업 장부에 남아 다시 시도된다 (A-5)
+            lines.append(f"• {tag}{r['topic']} — ⏳ 노션 저장 대기 중, 다시 시도할게요 (원장에는 저장됨)")
     if saved and not any(r.get("notion_url") or r.get("notion_error") for r in saved):
         lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
     if result.get("replayed"):

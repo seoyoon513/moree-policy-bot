@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config import Settings
@@ -18,6 +18,7 @@ from app.config import Settings
 log = logging.getLogger("policy-ops")
 
 SYNC_FAILURE_ALERT_AT = 3  # 연속 실패가 이 횟수가 되는 순간 한 번 알린다
+PENDING_ALERT_AFTER = timedelta(minutes=30)  # 후속 작업(노션 저장 등)이 이보다 오래 대기하면 degraded
 
 
 def notify(s: Settings, message: str) -> bool:
@@ -81,8 +82,19 @@ def health_report(s: Settings, indexed_chunks: int) -> dict:
     """/health 응답. 설정 문제·동기화 실패가 있으면 status=degraded.
     HTTP 코드는 200으로 둔다: 컨테이너를 재시작해도 설정·노션 문제는 고쳐지지 않으니
     Docker healthcheck(=재시작 판단)는 '프로세스가 응답하나'만 보고, 내용은 사람이 본다."""
+    from app.outbox import Outbox
     state = read_sync_state(s)
     problems = s.problems("api")
+    outbox = Outbox(s.data_dir)
+    followups = outbox.summary()
+    broken = outbox.ledger.broken  # summary()가 원장을 읽은 직후의 깨진 줄 수
+    if followups["dead"]:
+        problems.append(f"포기한 후속 작업 {followups['dead']}건 — python -m scripts.outbox list 로 확인")
+    if followups["oldest_pending_at"] and \
+            datetime.fromisoformat(followups["oldest_pending_at"]) < datetime.now(timezone.utc) - PENDING_ALERT_AFTER:
+        problems.append(f"노션 저장·정책서 반영 대기 {followups['pending']}건이 {PENDING_ALERT_AFTER}보다 오래됨")
+    if broken:
+        problems.append(f"원장(history.jsonl)에 읽을 수 없는 줄 {broken}개")
     if state.get("consecutive_failures"):
         problems.append(f"동기화 연속 실패 {state['consecutive_failures']}회: {state.get('last_error', '')[:200]}")
     if not state.get("last_ok_at"):
@@ -92,5 +104,7 @@ def health_report(s: Settings, indexed_chunks: int) -> dict:
         "indexed_chunks": indexed_chunks,
         "last_sync_ok_at": state.get("last_ok_at"),
         "last_sync_error_at": state.get("last_error_at"),
+        "followups": followups,
+        "broken_ledger_lines": broken,
         "problems": problems,
     }

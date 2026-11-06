@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.domain import ThreadMessage
-from app.services import spec_reflect
+from app.services import followups
 from app.services.storage import resummary_context, save_decisions, thread_source
 from app.services.summarizer import summarize_thread
 
@@ -111,7 +111,7 @@ _locks: dict[str, asyncio.Lock] = {}
 def _saved_view(r) -> dict:
     return {"id": r.record["id"], "topic": r.record["topic"], "version": r.record.get("version", 1),
             "updated": r.updated, "reopens": r.record.get("reopens"),
-            "notion_url": r.notion_url, "notion_error": r.notion_error}
+            "notion_url": r.notion_url, "notion_error": r.notion_error, "notion_pending": r.notion_pending}
 
 
 async def approve(store: PendingStore, summary_id: str, *, decisions: list[dict], approved_by: str,
@@ -123,12 +123,10 @@ async def approve(store: PendingStore, summary_id: str, *, decisions: list[dict]
         if item.get("state") == "approved":
             log.info("이미 승인된 정리 — 저장하지 않고 이전 결과 반환 (summary=%s)", summary_id)
             return item["result"] | {"replayed": True}
-        results = await save_decisions(decisions, source=item["source"], approved_by=approved_by)
-        reflect_lines: list[str] = []
-        if spec_reflect.NOTION_SPEC_PAGES or spec_reflect.NOTION_SPEC_INBOX_PAGE:
-            # 원문은 고치지 않고 댓글·콜아웃만. 실패는 결과 줄에 '⚠️ 실패'로 남고 저장은 그대로다
-            outcomes = await spec_reflect.reflect_records([(r.record, r.notion_url) for r in results], user=user)
-            reflect_lines = spec_reflect.format_outcomes(outcomes)
+        # 원장 줄(+후속 작업) → 노션 저장을 바로 한 번. 실패는 장부(outbox)에 남아 다시 시도된다 (A-5)
+        results = await save_decisions(decisions, source=item["source"], approved_by=approved_by, plan_reflect=True)
+        # 정책서 반영 제안도 후속 작업. 원문은 고치지 않고 댓글·콜아웃만
+        reflect_lines = await followups.reflect_after_save(results, user=user)
         result = {"saved": [_saved_view(r) for r in results], "reflect_lines": reflect_lines, "replayed": False}
         item |= {"state": "approved", "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                  "approved_by": approved_by, "result": result}

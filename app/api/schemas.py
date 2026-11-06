@@ -144,6 +144,7 @@ class SavedDecision(BaseModel):
     reopens: str | None = None
     notion_url: str | None = None
     notion_error: str | None = None
+    notion_pending: bool = False   # 노션 저장 실패 → 원장에는 있고 장부(outbox)에 남아 다시 시도된다
 
 
 class ApprovalResult(BaseModel):

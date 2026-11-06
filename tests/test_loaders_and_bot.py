@@ -110,7 +110,7 @@ def test_approval_lines_from_api_result():
               "reflect_lines": ["📚 기준 정책서 반영 제안", "• ✔️ 이미 반영됨 · 주제A"], "replayed": True}
     text = approval_lines("@me", result, edited=1, excluded=0)
     assert "결정 2건 저장됨 (수정 1건 · 제외 0건)" in text and "🔁 변경 v2 · [주제A](https://n/a)" in text
-    assert "주제B — ⚠️ Notion 저장 실패" in text and "다시 저장하지 않았어요" in text and text.endswith("주제A")
+    assert "주제B — ⏳ 노션 저장 대기 중" in text and "다시 저장하지 않았어요" in text and text.endswith("주제A")
     assert "만료" in approval_error_text(404, {})
 
 

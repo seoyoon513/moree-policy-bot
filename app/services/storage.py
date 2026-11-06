@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 
 from app.ledger import Ledger
+from app.outbox import NOTION_UPSERT, SPEC_REFLECT, Outbox, PendingOp, op_key
+from app.services import followups, spec_reflect
 from app.notion.decisions import DecisionRepository, get_decision_repository
 from app.config import get_settings
 from app.domain import KST, ThreadMessage
@@ -38,6 +40,8 @@ class SaveResult:
     notion_url: str | None = None
     notion_error: str | None = None
     previous: list[dict] = field(default_factory=list)  # 덮어쓴 이전 버전들 (변경일 때)
+    # 노션 저장이 아직 안 끝남(실패) — 원장에는 있고, 장부(outbox)에 남아 다시 시도된다
+    notion_pending: bool = False
 
     @property
     def updated(self) -> bool:
@@ -69,10 +73,14 @@ def decided_at(source_messages: list[int], by_index: dict[int, dict]) -> str | N
 
 # 요약 단계에서만 쓰는 필드 (기록에는 relation·reopens로 남긴다)
 _TRANSIENT = {"source_messages", "prior_id", "unlinked_from", "include"}
+# 저장 단계가 정하는 값. A-6부터 결정은 HTTP(승인 API)로 들어오므로, 결정 dict가 이 키로 기록을 덮어쓰지 못하게 한다
+_RESERVED = {"id", "version", "source", "decided_at", "approved_by", "approved_at", "reopens", "ops"}
 
 
-def _build_record(d: dict, source: dict, approved_by: str, now: datetime, prior: dict | None = None) -> dict:
-    """prior: 덮어쓸 이전 버전 (변경). 있으면 같은 기록 ID를 쓰고 version을 올린다."""
+def _build_record(d: dict, source: dict, approved_by: str, now: datetime, prior: dict | None = None,
+                  ops: list[str] | None = None) -> dict:
+    """prior: 덮어쓸 이전 버전 (변경). 있으면 같은 기록 ID를 쓰고 version을 올린다.
+    ops: 이 버전의 후속 작업 (app/outbox.py). 원장 줄에 같이 써서 결정과 할 일이 어긋나지 않게 한다."""
     by_index = source.get("messages_by_index", {})
     src = {k: v for k, v in source.items() if k != "messages_by_index"}
     used = [by_index[n] for n in d.get("source_messages", []) if n in by_index]
@@ -82,7 +90,7 @@ def _build_record(d: dict, source: dict, approved_by: str, now: datetime, prior:
     record = {
         "id": prior["id"] if prior else uuid.uuid4().hex[:8],
         "version": prior.get("version", 1) + 1 if prior else 1,
-        **{k: v for k, v in d.items() if k not in _TRANSIENT},
+        **{k: v for k, v in d.items() if k not in _TRANSIENT | _RESERVED},
         "source": src,
         "decided_at": decided_at(d.get("source_messages", []), by_index) or approved,
         "approved_by": approved_by,
@@ -90,6 +98,8 @@ def _build_record(d: dict, source: dict, approved_by: str, now: datetime, prior:
     }
     if d.get("relation") == "reopen" and d.get("prior_id"):
         record["reopens"] = d["prior_id"]  # 이전 최종결정은 그대로 두고 재논의 중임을 연결
+    if ops:
+        record["ops"] = list(ops)
     return record
 
 
@@ -169,8 +179,17 @@ def _write_local(record: dict, now: datetime) -> Path:
 _DEFAULT = object()
 
 
+def planned_ops(status: str | None, *, notion: bool, reflect: bool) -> list[str]:
+    """이 버전이 해야 할 후속 작업. 정책서 반영은 반영 대상 상태(SPEC_REFLECT_STATUSES)이고 노션에 저장될 때만."""
+    ops = [NOTION_UPSERT] if notion else []
+    if notion and reflect and status in spec_reflect.SPEC_REFLECT_STATUSES \
+            and (spec_reflect.NOTION_SPEC_PAGES or spec_reflect.NOTION_SPEC_INBOX_PAGE):
+        ops.append(SPEC_REFLECT)
+    return ops
+
+
 async def save_decisions(decisions: list[dict], *, source: dict, approved_by: str,
-                         repo: DecisionRepository | None = _DEFAULT) -> list[SaveResult]:
+                         repo: DecisionRepository | None = _DEFAULT, plan_reflect: bool = False) -> list[SaveResult]:
     """source["messages_by_index"]: messages_by_index()의 결과. 결정일 계산과 근거 발췌에 쓴다.
 
     결정의 relation에 따라
@@ -178,24 +197,27 @@ async def save_decisions(decisions: list[dict], *, source: dict, approved_by: st
     - reopen·new: 새 기록. reopen은 이전 최종결정을 덮지 않고 reopens로 연결만
     - unchanged는 호출하는 쪽에서 빼고 넘긴다
     repo: 결정 기록 원본 저장소. 생략하면 설정대로(노션 또는 None), None이면 로컬 원장에만 저장.
+    plan_reflect: 정책서 반영 제안을 후속 작업으로 예약 (실행은 호출하는 쪽: approvals → followups).
+
+    순서 (A-5): 원장 줄(+ops)을 먼저 쓰고 = 승인 확정, 노션 저장은 후속 작업으로 바로 한 번 실행한다.
+    노션이 실패해도 원장 줄과 장부의 failed가 남아 다시 시도된다 (전에는 메모리에만 남고 사라졌다).
     """
     if repo is _DEFAULT:
         repo = get_decision_repository()
     now = datetime.now(KST)
     versions = load_versions()
+    outbox = Outbox(DATA_DIR)
     results = []
     for d in decisions:
         history = versions.get(d.get("prior_id") or "") if d.get("relation") == "update" else None
-        record = _build_record(d, source, approved_by, now, prior=history[-1] if history else None)
+        record = _build_record(d, source, approved_by, now, prior=history[-1] if history else None,
+                               ops=planned_ops(d.get("status"), notion=repo is not None, reflect=plan_reflect))
         result = SaveResult(record=record, path=_write_local(record, now), previous=history or [])
         if repo is not None:
-            try:
-                if history:
-                    result.notion_url = await repo.update(record, history)
-                else:
-                    result.notion_url = await repo.add(record)
-            except Exception as e:  # 로컬은 저장됐으니 Notion 실패만 보고
-                log.exception("Notion 저장 실패 (id=%s)", record["id"])
-                result.notion_error = str(e)[:300]
+            op = PendingOp(op_key(record, NOTION_UPSERT), NOTION_UPSERT, record, history or [])
+            result.notion_url = await followups.run_notion(op, outbox, repo)
+            if not result.notion_url:
+                result.notion_pending = True
+                result.notion_error = (outbox.latest().get(op.key) or {}).get("error")
         results.append(result)
     return results
