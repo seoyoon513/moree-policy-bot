@@ -11,6 +11,7 @@ import logging
 import discord
 
 import spec_reflect
+from app.logging_setup import current_request_id, set_request_id
 from config import APPROVAL_TIMEOUT, STATUSES
 from policy_search import schedule_reindex
 from storage import save_decisions
@@ -167,6 +168,8 @@ class ApprovalView(discord.ui.View):
         self.excluded: set[int] = set()
         self.selected = 0
         self.message: discord.Message | None = None
+        # 버튼 콜백은 디스코드 이벤트마다 새 작업에서 돈다 → /정책정리 때의 ID를 들고 있다가 다시 설정
+        self.request_id = current_request_id()
         self._refresh_controls()
 
     # --- 화면 ---
@@ -241,6 +244,7 @@ class ApprovalView(discord.ui.View):
 
     @discord.ui.button(label="승인하고 저장", style=discord.ButtonStyle.success, row=2)
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        set_request_id(self.request_id)
         to_save = self.kept_decisions()
         if not to_save:
             await interaction.response.send_message("저장할 결정이 없어요. 모두 제외했다면 [취소]를 눌러 주세요.",
@@ -271,6 +275,9 @@ class ApprovalView(discord.ui.View):
         if not any(r.notion_url or r.notion_error for r in results):
             lines.append("(Notion 미설정 — 로컬 JSON에만 저장)")
         await interaction.edit_original_response(content="\n".join(lines)[:2000])
+        log.info("승인 저장 완료 (thread=%s, 저장 %d건, 노션 실패 %d건)", self.source.get("thread_id"), len(results),
+                 sum(1 for r in results if r.notion_error),
+                 extra={"record_ids": [r.record["id"] for r in results], "approved_by": interaction.user.id})
         schedule_reindex()  # 새 결정을 검색 인덱스에 반영 (백그라운드)
 
         # 원천 정책서 반영 제안 (정책서가 설정된 영역의 최종결정만). 원문은 고치지 않고 댓글·콜아웃만 넣는다

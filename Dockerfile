@@ -27,4 +27,5 @@ USER app
 EXPOSE 8000
 
 # 기본 실행 = API 서버. 0.0.0.0 으로 열어야 컨테이너 밖(다른 컨테이너/호스트)에서 접속 가능
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: 요청 로그는 app/api/main.py 미들웨어가 request_id와 함께 남긴다 (중복 방지)
+CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

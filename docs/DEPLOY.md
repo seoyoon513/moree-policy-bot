@@ -67,7 +67,10 @@ cd ~/policy-bot && git pull && docker compose up -d --build
 | 하고 싶은 것 | 명령 |
 |---|---|
 | 상태 | `docker compose ps` |
-| 로그 | `docker compose logs -f --tail=100 api` |
+| 로그 | `docker compose logs -f --tail=100 api` (서버는 JSON 한 줄 로그, 컨테이너당 최대 30MB로 회전) |
+| 요청 하나 따라가기 | `docker compose logs api bot \| grep s-1a2b3c4d` — 봇이 요청마다 만든 `request_id`가 API 로그·`usage.jsonl`에도 남는다 |
+| 상태 한눈에 | `curl -s localhost:8000/health` — `status`가 `degraded`면 `problems`에 이유 (설정 문제·동기화 실패) |
+| 자원 사용량 | `docker stats --no-stream` — compose의 `mem_limit`(api 1g · bot 512m)에 가까우면 조정 |
 | 컨테이너 안에 들어가기 | `docker compose exec api bash` |
 | 평가 돌리기 | `docker compose exec api python -m scripts.eval_rag --sweep` |
 | 토큰 사용량 | `curl -s localhost:8000/admin/usage?days=7 -H "X-Admin-Token: ..."` |
@@ -84,7 +87,9 @@ ssh -i ~/keys/policy-bot.pem -L 8000:127.0.0.1:8000 ubuntu@<공개IP>
 ## 트러블슈팅
 | 증상 | 확인 |
 |---|---|
-| bot이 계속 재시작 | `docker compose logs bot` — 대부분 `.env` 값 누락 |
+| bot이 계속 재시작 | `docker compose logs bot` — 시작할 때 "설정을 확인해 주세요" 아래에 빠진 값이 나온다 |
+| 컨테이너가 `OOMKilled` | `docker inspect <컨테이너> \| grep OOM` → compose `mem_limit`을 올리거나 VM 메모리 확인 |
+| `/health`가 `degraded` | `problems` 확인. 동기화 실패면 `docker compose logs api \| grep 동기화`, 3회 연속 실패 시 운영 웹훅으로 알림 |
 | `정책 API 서버(http://api:8000)에 연결할 수 없어요` | `docker compose ps`로 api healthy인지 |
 | `Permission denied: /app/data/...` | 호스트 `data/` 소유자가 uid 1000이 아님 → `sudo chown -R 1000:1000 data` |
 | 빌드 중 멈춤/Killed | 메모리 부족 → 2GB 이상 VM 또는 swap 추가 |

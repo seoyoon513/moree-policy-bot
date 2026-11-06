@@ -4,12 +4,16 @@
 /정책검색 : 저장된 결정 검색 (LLM 답변 없음)
 @봇 질문  : 저장된 결정을 근거로 자연어 질문에 답변 (mention.py, 읽기 전용)
 """
+import asyncio
 import logging
+import socket
 
 import discord
 from discord import app_commands
 
+from app import ops
 from app.config import get_settings
+from app.logging_setup import new_request_id, setup_logging
 from config import DISCORD_TOKEN, GUILD_ID, MAX_MESSAGES
 from storage import resummary_context, thread_source
 from summarizer import SummaryError, ThreadMessage, summarize_thread
@@ -18,7 +22,6 @@ from policy_search import register_policy_commands
 from thread_reader import to_thread_messages
 from views import ApprovalView
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("policy-bot")
 
 intents = discord.Intents.default()
@@ -42,14 +45,25 @@ class PolicyBot(discord.Client):
 
     async def on_ready(self):
         log.info("로그인: %s (%s)", self.user, self.user.id if self.user else "-")
+        # on_ready는 재연결 때마다 다시 불린다 → 시작 알림은 프로세스당 한 번
+        if not getattr(self, "_announced", False):
+            self._announced = True
+            await asyncio.to_thread(ops.notify, get_settings(), startup_message(socket.gethostname()))
 
     async def on_message(self, message: discord.Message):
         if self.user and is_addressed(message, self.user):
+            new_request_id("m-")  # 멘션 질문 하나 = 요청 하나. API 호출까지 같은 ID로 로그를 묶는다
+            log.info("멘션 질문 (message=%s, channel=%s)", message.id, message.channel.id)
             try:
                 await handle_mention(message, self.user)
             except Exception:  # 한 질문의 실패가 봇 전체를 멈추지 않게
                 log.exception("멘션 질문 처리 실패 (message=%s)", message.id)
                 await message.reply("처리 중 오류가 났어요. 잠시 후 다시 물어봐 주세요.", mention_author=False)
+
+
+def startup_message(host: str) -> str:
+    """운영 채널에 남기는 시작 알림. 호스트 이름을 넣어 같은 토큰으로 두 곳에서 띄운 걸 바로 알아챈다."""
+    return f"🟢 정책 봇 시작 — 호스트 `{host}`. 다른 호스트의 시작 알림이 같이 보이면 봇이 두 개 떠 있는 거예요."
 
 
 bot = PolicyBot()
@@ -79,6 +93,7 @@ async def collect_thread_messages(thread: discord.Thread) -> list[ThreadMessage]
 @bot.tree.command(name="정책정리", description="이 스레드의 논의를 정책 결정으로 정리해요")
 async def summarize_command(interaction: discord.Interaction):
     thread = interaction.channel
+    new_request_id("s-")  # 정리 → 승인 → 저장 → 정책서 반영까지 같은 ID (승인 화면이 이어받는다)
     if not isinstance(thread, discord.Thread):
         await interaction.response.send_message("스레드 안에서만 쓸 수 있어요.", ephemeral=True)
         return
@@ -111,6 +126,8 @@ async def summarize_command(interaction: discord.Interaction):
         return
 
     source = thread_source(str(thread.id), thread.name, thread.jump_url, messages)
+    log.info("정리 결과 승인 대기 (thread=%s, 결정 %d건, 변동 없음 %d건)", thread.id, len(changed),
+             len(decisions) - len(changed))
     view = ApprovalView(owner_id=interaction.user.id, decisions=changed, source=source, messages=messages,
                         previous=ctx.previous, unchanged=len(decisions) - len(changed))
     view.message = await interaction.followup.send(**view.render(), wait=True)
@@ -127,6 +144,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 
 if __name__ == "__main__":
+    setup_logging("bot")
     # 설정 문제는 실행 중 처음 쓰는 순간이 아니라 시작할 때 한 번에 알린다
     _settings = get_settings()
     for w in _settings.warnings():

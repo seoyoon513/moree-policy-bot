@@ -127,8 +127,8 @@
 | # | 할 일 | 성공 기준 | 상태 |
 |---|---|---|---|
 | 5-1 | 기존 EC2 확인: 여유 메모리·CPU, 아키텍처, 서버 담당자 합의 | 올릴지 말지 결정 | ⬜ |
-| 5-2 | compose에 `mem_limit` · `cpus` 추가, EC2에 배포 (`DEPLOY.md` 절차) | 1주 무중단, 운영 API 영향 없음 | ⬜ |
-| 5-3 | 재시작 시 "온라인" 메시지, 예산 알림 웹훅 채널 연결 | 봇 다운을 바로 알 수 있음 | ⬜ |
+| 5-2 | compose에 `mem_limit` · `cpus` 추가, EC2에 배포 (`DEPLOY.md` 절차) | 1주 무중단, 운영 API 영향 없음 | 🟨 상한·로그 회전 추가(A-2, 값은 `docker stats` 실측 전 추정), EC2 배포 전 |
+| 5-3 | 재시작 시 "온라인" 메시지, 예산 알림 웹훅 채널 연결 | 봇 다운을 바로 알 수 있음 | 🟨 시작 알림 코드 완료(A-2), 운영 채널 웹훅(`OPS_WEBHOOK_URL`) 설정 전. 봇이 죽은 걸 알리는 heartbeat는 아직 |
 | 5-4 | (선택) push → 자동 배포 (self-hosted runner 또는 SSH 액션) | 수동 배포 없이 반영 | ⬜ |
 | 5-5 | (고도화) 사용량 모니터링 웹 | 루트·사용자·일별 비용 그래프 | ⬜ |
 
@@ -149,7 +149,7 @@
 |---|---|---|---|
 | A-0 | 리뷰 문서 검토 → 저장소 역할(노션=원본, Chroma=파생, history.jsonl=원장) 결정을 `DIRECTION.md`에 | 결정 기록 | ⬜ |
 | A-1 | 설정 통합: pydantic Settings 1개, 루트 `config.py`는 재수출, 시작 시 필수값 검증 | `os.environ` 직접 읽기 0곳 | ✅ `ENV_FILE` 외 0곳, 옛 config와 23개 값 동일 확인 |
-| A-2 | 로그 설정 1곳 + `request_id`, compose 로그 회전·`mem_limit`, `/health` 확장, 봇 시작 알림 (5-2·5-3과 겹침) | 승인 1건을 request_id로 끝까지 추적 | ⬜ |
+| A-2 | 로그 설정 1곳 + `request_id`, compose 로그 회전·`mem_limit`, `/health` 확장, 봇 시작 알림 (5-2·5-3과 겹침) | 승인 1건을 request_id로 끝까지 추적 | ✅ 코드·테스트, 로컬 uvicorn에서 헤더→JSON 로그 확인. 디스코드 실동작 확인 전 |
 | A-3 | 노션 클라이언트 1개(429 재시도) + 속성 스키마 1곳 + `DecisionRepository`(Notion/Jsonl/Fake) | 노션 API 호출이 한 모듈에만 | ⬜ |
 | A-4 | LLM 호출 1곳 (usage 기록 + 한도 + 오류 안내, 0-3 포함) | 직접 `messages.create` 호출 0곳 | ⬜ |
 | A-5a | 실패를 남기기: 원장 줄에 `ops`, 결과는 `outbox.jsonl`, fsync, 깨진 줄 경고, 원장 읽기 1곳 (리뷰 3-4 ①) | 노션 실패 후 재시작해도 미반영 기록 목록이 나옴 | ⬜ |
@@ -185,3 +185,4 @@
 - 2026-11-06: 구조 점검 (`docs/ARCHITECTURE_REVIEW.md`). 쓰기 경로가 봇 안에 있어 노션 저장·재인덱싱·정책서 반영 실패 시 재시도 수단이 없고, 재정리는 로컬·검색은 노션을 "현재"로 봐 기준이 둘인 문제 확인. 설정 4곳·노션 클라이언트 3곳 중복. 제안: 저장소 역할 명시 → 설정·로그 → Repository → 아웃박스 → 쓰기 경로 API 이전(7단계). 코드 변경 없음. Pulse 동기화 문서는 사이트 인증서 만료로 미확인. 다음: A-0 결정.
 - 2026-11-06: 리뷰 문서에 3-4(쓰기 실패 방어: 커밋 지점·멱등성·대조·작업 기록 두 층)와 3-5(사용량은 분리하지 않음) 추가, A-5를 a~d로 쪼갬. 확인한 점: 작업 결과 줄을 history.jsonl에 섞으면 `JsonlLoader`가 깨짐 → `outbox.jsonl` 분리. 처리기는 쓰기 코드가 있는 봇 안에서 시작. 코드 변경 없음. 다음: A-0 결정 → A-1.
 - 2026-11-06: 노션 직접 수정을 언제 원장에 가져올지는 열린 질문으로 남김(리뷰 3-6, DIRECTION 2-1). **A-1 설정 통합 완료**: 봇 설정을 `app/config.Settings`로 모으고 루트 `config.py`는 같은 이름으로 재수출(기존 import 그대로), `policy_search`·`app/usage`·`batch_summarize`의 `os.environ` 직접 읽기와 `load_dotenv()` 2곳 제거, `NOTION_SPEC_PAGES` 파싱 1곳으로. 시작 시 점검 `Settings.problems()/warnings()` (봇은 문제 있으면 종료, API는 로그). 테스트가 로컬 `.env`를 읽어 실패하던 `test_source_auto_selection` 해결(`ENV_FILE=""` + 테스트마다 설정 캐시 초기화). 테스트 133+1실패 → 146 통과. 실제 `.env`로 옛 config와 값 23개 동일. 다음: A-2 로그·운영 기본기.
+- 2026-11-06: **A-2 로그·운영 기본기**. `app/logging_setup.py`(text/json, LOG_FORMAT·LOG_LEVEL) 한 곳으로, API는 그동안 핸들러가 없어 `policy-api` INFO 로그가 버려지고 있었음 → lifespan에서 설정. `request_id`(contextvars): 봇 진입점(멘션 `m-`·/정책정리 `s-`·/정책검색 `q-`)에서 만들고, 승인 버튼은 정리 때 ID를 이어받고, `X-Request-ID`로 API까지 → API 미들웨어가 요청 한 줄 로그(상태·지연)와 응답 헤더, `usage.jsonl`에도 `request_id`. 동기화 결과를 `data/sync_state.json`에 남기고 3회 연속 실패 시 운영 웹훅 알림, `/health`는 200 유지 + `status: ok|degraded` + `problems`. 봇 시작 알림(호스트 이름 → 중복 실행 확인). compose 로그 회전(10MB×3)·`mem_limit`(api 1g · bot 512m, 추정)·JSON 로그, uvicorn 접근 로그는 미들웨어로 대체. 테스트 146 → 157. 로컬 uvicorn에서 `X-Request-ID: m-smoke02` → 같은 ID의 JSON 로그 확인. 다음: A-3 노션 접근 일원화.

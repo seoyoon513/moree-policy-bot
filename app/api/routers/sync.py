@@ -5,7 +5,9 @@ RESTful 설계 메모
 - POST /admin/sync-jobs        → 202 Accepted + Location 헤더 (아직 안 끝났다는 뜻)
 - GET  /admin/sync-jobs/{id}   → 진행 상태 폴링
 - 작업 저장소는 메모리 dict라 서버 재시작 시 사라짐 (MVP 한정).
+  대신 마지막 결과(성공 시각·연속 실패 수)는 data/sync_state.json에 남겨 /health에서 본다 (app/ops.py).
 """
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -13,10 +15,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 
 from app.api.deps import get_embedder, get_store, require_admin
 from app.api.schemas import SyncJob, SyncJobCreate
+from app import ops
 from app.config import Settings, get_settings
 from app.rag.embedder import Embedder
 from app.rag.ingest import ingest_from_source
 from app.rag.store import VectorStore
+
+log = logging.getLogger("policy-api")
 
 router = APIRouter(prefix="/admin/sync-jobs", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -34,9 +39,14 @@ def _run(job_id: str, force: bool, settings: Settings, embedder: Embedder, store
         result = ingest_from_source(settings, embedder, store, force=force)
         job.result = result.__dict__
         job.status = "succeeded"
+        log.info("동기화 성공 (job=%s, 갱신 %d · 건너뜀 %d · 삭제 %d)", job_id, result.updated_pages,
+                 result.skipped_pages, result.removed_chunks, extra={"job_id": job_id})
+        ops.record_sync_result(settings, ok=True, result=job.result)
     except Exception as e:  # noqa: BLE001 — 작업 상태로 노출
         job.status = "failed"
         job.error = f"{type(e).__name__}: {e}"
+        log.exception("동기화 실패 (job=%s)", job_id, extra={"job_id": job_id})
+        ops.record_sync_result(settings, ok=False, error=job.error)
     finally:
         job.finished_at = _now()
 

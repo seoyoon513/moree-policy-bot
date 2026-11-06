@@ -135,9 +135,15 @@ def test_admin_requires_token(setup):
     assert TestClient(app).post("/admin/sync-jobs", json={}).status_code == 401
 
 
-def test_health(setup):
+def test_health(setup, tmp_path):
+    app.dependency_overrides[deps.get_settings] = lambda: Settings(data_dir=str(tmp_path), embedding_backend="local",
+                                                                   admin_token="t")
     r = TestClient(app).get("/health")
-    assert r.json() == {"status": "ok", "indexed_chunks": 3}
+    assert r.status_code == 200
+    body = r.json()
+    assert body["indexed_chunks"] == 3
+    # 동기화 기록이 없으면 degraded (HTTP는 200: 재시작으로 고쳐지는 문제가 아니라서)
+    assert body["status"] == "degraded" and body["last_sync_ok_at"] is None
 
 
 def test_min_score_drops_unrelated_results(setup):

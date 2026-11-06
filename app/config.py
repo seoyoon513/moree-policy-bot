@@ -120,6 +120,15 @@ class Settings(BaseSettings):
     # 알림을 보낼 Discord 웹훅 URL (채널 설정 → 연동 → 웹후크). 비우면 로그만 남김
     budget_alert_webhook_url: str = ""
 
+    # --- 로그·운영 (app/logging_setup.py) ---
+    log_format: str = "text"          # text | json (서버에서는 json)
+    log_level: str = "INFO"
+    # 운영 알림(봇 시작 등)을 보낼 Discord 웹훅. 비우면 budget_alert_webhook_url, 그것도 비우면 로그만
+    ops_webhook_url: str = ""
+
+    def resolved_ops_webhook_url(self) -> str:
+        return self.ops_webhook_url or self.budget_alert_webhook_url
+
     # --- 토큰 사용량 기록 (app/usage.py) ---
     usage_log_path: str = ""          # 비우면 <data_dir>/usage.jsonl
     usage_log_disabled: bool = False  # 테스트에서 실제 파일에 기록하지 않게
@@ -164,6 +173,8 @@ class Settings(BaseSettings):
             out.append("NOTION_TOKEN과 NOTION_DATA_SOURCE_ID는 둘 다 넣거나 둘 다 비워야 해요.")
         if role == "api" and self.embedding_backend == "openai" and not self.openai_api_key:
             out.append("EMBEDDING_BACKEND=openai인데 OPENAI_API_KEY가 비어 있어요.")
+        if self.log_format not in ("text", "json"):
+            out.append(f"LOG_FORMAT은 text|json 중 하나여야 해요 (지금: {self.log_format}).")
         if self.rag_source not in ("auto", "notion", "jsonl"):
             out.append(f"RAG_SOURCE는 auto|notion|jsonl 중 하나여야 해요 (지금: {self.rag_source}).")
         return out

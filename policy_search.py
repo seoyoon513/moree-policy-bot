@@ -18,6 +18,7 @@ import discord
 from discord import app_commands
 
 from app.config import get_settings
+from app.logging_setup import current_request_id, new_request_id
 from config import AREAS, STATUSES
 
 log = logging.getLogger("policy-bot")
@@ -46,9 +47,17 @@ def _get_session() -> aiohttp.ClientSession:
     return _session
 
 
+def api_headers(extra: dict | None = None) -> dict:
+    """API 호출 공통 헤더: 인증 키 + 지금 작업의 request_id (API 로그와 같은 ID로 묶이게)."""
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    if rid := current_request_id():
+        headers["X-Request-ID"] = rid
+    return headers | (extra or {})
+
+
 async def call_api(method: str, path: str, **kwargs) -> tuple[int, dict]:
     try:
-        headers = {**({"X-API-Key": API_KEY} if API_KEY else {}), **kwargs.pop("headers", {})}
+        headers = api_headers(kwargs.pop("headers", {}))
         async with _get_session().request(method, f"{API_URL}{path}", headers=headers, **kwargs) as r:
             try:
                 data = await r.json()
@@ -130,6 +139,7 @@ def register_policy_commands(tree: app_commands.CommandTree) -> None:
         영역: app_commands.Choice[str] | None = None,
         상태: app_commands.Choice[str] | None = None,
     ):
+        new_request_id("q-")
         await interaction.response.defer(thinking=True)
         params = {"q": 검색어, "k": 5}
         if 영역:

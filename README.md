@@ -73,6 +73,8 @@ flowchart LR
 │   ├── config.py        # 설정 단일 출처 Settings (봇·API·스크립트 공용, .env/환경변수)
 │   ├── usage.py         # 토큰·비용·지연 기록 (data/usage.jsonl)
 │   ├── limits.py        # 사용자별 일일 한도, 월 예산 알림·차단
+│   ├── logging_setup.py # 로그 설정 한 곳 (text/json, request_id)
+│   ├── ops.py           # 운영 알림 웹훅, 동기화 상태(data/sync_state.json), /health 내용
 │   ├── evaluation.py    # 골든셋 평가 로직
 │   ├── api/             # FastAPI: main, routers(policies · sync · usage), schemas, deps
 │   └── rag/             # 로더(결정·정책서), 청킹, 임베딩, 저장소, 키워드, 검색, 리랭킹, 생성

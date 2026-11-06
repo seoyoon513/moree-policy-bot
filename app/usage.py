@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config import get_settings
+from app.logging_setup import current_request_id
 
 _lock = threading.Lock()
 
@@ -58,6 +59,8 @@ class Usage:
     latency_ms: int = 0
     cost_usd: float = 0.0
     user: str | None = None  # 호출한 사람 (Discord 사용자 ID). 사용자별 일일 제한에 쓴다
+    # 이 호출을 만든 요청 (app/logging_setup). 로그와 비용 기록을 같은 ID로 대조할 수 있다
+    request_id: str | None = field(default_factory=lambda: current_request_id())
     ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def compute_cost(self) -> "Usage":

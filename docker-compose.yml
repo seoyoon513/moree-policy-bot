@@ -1,6 +1,14 @@
 # 실행:  docker compose up -d --build
 # 로그:  docker compose logs -f bot   (또는 api)
 # 중지:  docker compose down
+
+# 로그 회전: Docker 기본 json-file 로그는 크기 제한이 없어 공용 서버 디스크를 채울 수 있다 (컨테이너당 최대 30MB)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
     build: .
@@ -10,6 +18,11 @@ services:
       CHROMA_PATH: /app/data/mori-rebuild/chroma
       DATA_DIR: /app/data/mori-rebuild
       USAGE_LOG_PATH: /app/data/usage.jsonl
+      LOG_FORMAT: json              # 한 줄 = JSON 하나. docker compose logs api | grep <request_id>
+    logging: *default-logging
+    # 같은 서버의 다른 서비스를 보호하는 상한. 실제 사용량(docker stats) 보고 조정 (EXPERIMENTS 5-1)
+    mem_limit: 1g
+    cpus: 1.0
     volumes:
       - ./data:/app/data            # 호스트 폴더 ↔ 컨테이너 폴더. 인덱스·히스토리·usage 로그 보존
     ports:
@@ -35,6 +48,10 @@ services:
       POLICY_API_URL: http://api:8000
       DATA_DIR: /app/data/mori-rebuild
       USAGE_LOG_PATH: /app/data/usage.jsonl
+      LOG_FORMAT: json
+    logging: *default-logging
+    mem_limit: 512m
+    cpus: 0.5
     volumes:
       - ./data:/app/data
     # ports 없음: 봇은 디스코드 서버로 '나가는' 연결(WebSocket)만 쓰므로 들어오는 포트가 필요 없다
@@ -56,4 +73,5 @@ services:
       api:
         condition: service_healthy
     profiles: ["tunnel"]
+    logging: *default-logging
     restart: unless-stopped
