@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     # 알림을 보낼 Discord 웹훅 URL (채널 설정 → 연동 → 웹후크). 비우면 로그만 남김
     budget_alert_webhook_url: str = ""
 
+    # --- 백그라운드 처리기 (app/worker.py, API 프로세스 안) ---
+    background_worker_enabled: bool = True
+    followup_interval_s: int = 30        # 후속 작업 장부를 확인하는 간격
+    periodic_sync_minutes: int = 10      # 주기 재인덱싱 간격 (0 = 끔). 승인 외 변경(노션 직접 수정 등)도 이 안에 반영
+
     # --- 로그·운영 (app/logging_setup.py) ---
     log_format: str = "text"          # text | json (서버에서는 json)
     log_level: str = "INFO"

@@ -3,6 +3,7 @@
 실행: uvicorn app.api.main:app --reload
 문서: http://localhost:8000/docs
 """
+import asyncio
 import logging
 import re
 import time
@@ -30,7 +31,17 @@ async def lifespan(_app: FastAPI):
         log.error("설정 문제: %s", p)
     for w in s.warnings():
         log.warning("설정 확인: %s", w)
+    task = None
+    if s.background_worker_enabled:
+        # 후속 작업 재시도 + 주기 동기화 (A-5c). 처리기는 이 프로세스 하나 — uvicorn worker 1개 전제
+        from app.api.deps import get_embedder, get_store
+        from app.api.routers.sync import request_sync
+        from app.worker import Worker
+        worker = Worker(s, lambda st: request_sync(st, get_embedder(), get_store()))
+        task = asyncio.create_task(worker.run_forever())
     yield
+    if task:
+        task.cancel()
 
 
 app = FastAPI(

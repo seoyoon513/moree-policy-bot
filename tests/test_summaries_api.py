@@ -157,11 +157,11 @@ def test_request_sync_reruns_after_running_job(monkeypatch, tmp_path):
     monkeypatch.setattr(sync, "_rerun", False)
     monkeypatch.setattr(sync.ops, "record_sync_result", lambda *a, **k: None)
 
-    def fake_ingest(settings, embedder, store, force=False):
+    def fake_ingest(settings, embedder, store, force=False, allow_mass_delete=False):
         runs.append(1)
         if len(runs) == 1:  # 첫 작업이 도는 중에 새 승인이 들어온다
             sync.request_sync(settings, embedder, store, delay=0)
-        return SimpleNamespace(updated_pages=1, skipped_pages=0, removed_chunks=0)
+        return SimpleNamespace(updated_pages=1, skipped_pages=0, removed_chunks=0, delete_blocked=None)
 
     monkeypatch.setattr(sync, "ingest_from_source", fake_ingest)
     sync.request_sync(Settings(data_dir=str(tmp_path)), None, None, delay=0)

@@ -61,6 +61,7 @@ class AnswerResponse(BaseModel):
 
 class SyncJobCreate(BaseModel):
     force: bool = False   # True면 내용 해시 비교 없이 전부 재임베딩
+    allow_mass_delete: bool = False   # 대량 삭제 안전장치 끄기 (DB를 바꿨을 때만)
 
 
 class SyncJob(BaseModel):

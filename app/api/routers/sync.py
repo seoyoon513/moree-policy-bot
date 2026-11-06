@@ -63,22 +63,26 @@ def request_sync(settings: Settings, embedder: Embedder, store: VectorStore,
     _run(job.id, False, settings, embedder, store)
 
 
-def _run(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore) -> None:
+def _run(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore,
+         allow_mass_delete: bool = False) -> None:
     global _rerun
     while True:
-        _run_once(job_id, force, settings, embedder, store)
+        _run_once(job_id, force, settings, embedder, store, allow_mass_delete)
         with _lock:
             if not _rerun:
                 return
-            _rerun, force = False, False
+            _rerun, force, allow_mass_delete = False, False, False
             job_id = _new_job().id
 
 
-def _run_once(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore) -> None:
+def _run_once(job_id: str, force: bool, settings: Settings, embedder: Embedder, store: VectorStore,
+              allow_mass_delete: bool = False) -> None:
     job = _jobs[job_id]
     job.status = "running"
     try:
-        result = ingest_from_source(settings, embedder, store, force=force)
+        result = ingest_from_source(settings, embedder, store, force=force, allow_mass_delete=allow_mass_delete)
+        if result.delete_blocked:
+            ops.notify(settings, f"⚠️ 검색 인덱스 대량 삭제를 멈췄어요 — {result.delete_blocked}")
         job.result = result.__dict__
         job.status = "succeeded"
         log.info("동기화 성공 (job=%s, 갱신 %d · 건너뜀 %d · 삭제 %d)", job_id, result.updated_pages,
@@ -106,7 +110,7 @@ def create_sync_job(
         if _running():
             raise HTTPException(status.HTTP_409_CONFLICT, "이미 진행 중인 동기화 작업이 있습니다")
         job = _new_job()
-    background.add_task(_run, job.id, body.force, settings, embedder, store)
+    background.add_task(_run, job.id, body.force, settings, embedder, store, body.allow_mass_delete)
     response.headers["Location"] = f"/admin/sync-jobs/{job.id}"
     return job
 
